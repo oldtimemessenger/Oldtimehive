@@ -32,7 +32,7 @@ a { color: inherit; text-decoration: none; }
   background: linear-gradient(180deg, transparent, rgba(0,0,0,.92) 28%);
   padding-bottom: 6px;
 }
-.nav button { color: #8e8e93; display: grid; justify-items: center; gap: 0; }
+.nav button { color: #8e8e93; display: grid; justify-items: center; gap: 0; position: relative; }
 .nav button svg { width: 26px; height: 26px; stroke: currentColor; fill: none; stroke-width: 1.8; }
 .nav button.on { color: #fff; }
 .nav .create {
@@ -162,7 +162,9 @@ textarea.field { min-height: 90px; resize: none; }
 .unread { min-width: 22px; height: 22px; border-radius: 999px; background: #e5e5ea; color: #111; font-size: 12px; font-weight: 750; display: grid; place-items: center; padding: 0 6px; }
 .centerprof { text-align: center; padding: 36px 20px; }
 .centerprof img.big { width: 108px; height: 108px; border-radius: 50%; object-fit: cover; margin: 0 auto 12px; }
-.msgdock { position: absolute; left: 12px; right: 12px; bottom: 18px; background: #f2f2f4; border-radius: 22px; padding: 12px 14px; color: #888; text-align: left; }
+.msgdock { position: absolute; left: 12px; right: 12px; bottom: 84px; background: #f2f2f4; border-radius: 22px; padding: 10px 14px; color: #111; display: flex; gap: 8px; align-items: center; z-index: 7; }
+.msgdock input { flex: 1; border: 0; background: transparent; outline: none; color: #111; }
+.msgdock button { font-weight: 750; color: #111; }
 .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 2px; }
 .cell { aspect-ratio: 1; background: #1c1c1e; overflow: hidden; }
 .cell img, .cell video { width: 100%; height: 100%; object-fit: cover; }
