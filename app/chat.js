@@ -105,14 +105,17 @@ export function openChatList(ctx) {
   ui.screen = "list";
   const me = api.me();
   const rows = api.db().convos.filter(c => c.members.includes(me.id) && !c.locked && !c.members.some(id => api.db().blocks.some(b => b.by === me.id && b.who === id)));
+  const locked = api.db().convos.filter(c => c.members.includes(me.id) && c.locked);
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="row" style="justify-content:space-between"><button class="icon" id="saved">☆</button><div class="row"><img src="${me.avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>Chats</b></div><div class="row"><button class="icon" id="newgroup">＋</button><button class="icon" id="newchat">✎</button></div></div>
     <input class="chatsearch" id="cq" placeholder="Search" />
+    ${locked.map(c => `<button class="listbtn" data-unlock="${c.id}">Locked · ${ctxEsc(nameOf(c, me))}</button>`).join("")}
     <div id="crows">${rows.map(c => row(c, me)).join("")}</div>
   </div></section>`, "light");
   ctx.$("#newchat").onclick = () => pick(ctx, false);
   ctx.$("#newgroup").onclick = () => pick(ctx, true);
   ctx.$("#saved").onclick = () => saved(ctx);
+  ctx.app.querySelectorAll("[data-unlock]").forEach(b => b.onclick = () => { mutate(db => { db.convos.find(x => x.id === b.dataset.unlock).locked = false; }); ui.screen = "thread"; ctx.setChat(b.dataset.unlock); });
   ctx.$("#cq").oninput = (e) => {
     const q = e.target.value.toLowerCase();
     ctx.$("#crows").innerHTML = rows.filter(c => nameOf(c, me).toLowerCase().includes(q) || (c.draft || "").toLowerCase().includes(q) || preview(c.messages.at(-1)).toLowerCase().includes(q)).map(c => row(c, me)).join("");
@@ -360,7 +363,7 @@ function group(ctx, id) {
 }
 function saved(ctx) {
   const items = [];
-  api.db().convos.forEach(c => c.messages.forEach(m => { if (m.starred) items.push([c, m]); }));
+  api.db().convos.forEach(c => c.messages.forEach(m => { if (m.starred || m.kept) items.push([c, m]); }));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Saved</b><span></span></div>
     ${items.map(([c, m]) => `<button class="listbtn" data-cv="${c.id}">${ctxEsc(nameOf(c, api.me()))} · ${ctxEsc(preview(m))}</button>`).join("") || `<div class="empty">No saved messages.</div>`}
@@ -404,12 +407,14 @@ function disappear(ctx, id) {
 function pick(ctx, group) {
   const sheet = ctx.$("#sheet");
   const picked = new Set();
+  let title = "";
   sheet.classList.add("on");
   const draw = () => {
     sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>${group ? "New group" : "New message"}</b>
-      ${group ? `<input class="field" id="gtitle" placeholder="Group name" style="margin:8px 0" />` : ""}
+      ${group ? `<input class="field" id="gtitle" placeholder="Group name" style="margin:8px 0" value="${ctxEsc(title)}" />` : ""}
       ${api.db().users.filter(u => u.id !== api.me().id).map(u => `<button class="listbtn" data-pick="${u.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b>${picked.has(u.id) ? " · added" : ""}</div></button>`).join("")}
       <button class="btn" id="start">Start</button></div>`;
+    if (group) ctx.$("#gtitle").oninput = (e) => { title = e.target.value; };
     sheet.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { if (group) picked.has(b.dataset.pick) ? picked.delete(b.dataset.pick) : picked.add(b.dataset.pick); else { picked.clear(); picked.add(b.dataset.pick); } draw(); });
     ctx.$("#start").onclick = () => {
       if (!picked.size) return ctx.toast("Pick someone");
