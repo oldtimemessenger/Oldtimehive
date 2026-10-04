@@ -1,53 +1,56 @@
-import { api, mutate } from "./store.js";
+import { api, mutate, fileToData } from "./store.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
 let tab = "updates";
 let feedMode = "foryou";
 let profileId = null;
+let profileMode = "posts";
 let storyTimer = null;
-let activePost = null;
 let createKind = "video";
 let pending = [];
 let mapCity = null;
 let chatId = null;
 let searchQ = "";
 let carouselIndex = {};
+let muted = true;
+let viewer = null;
 
-const esc = (s = "") => s.replace(/[&<>]/g, c => ({ "&": "&", "<": "<", ">": ">" }[c]));
-const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n);
-const ago = (t) => { const s = Math.max(1, (Date.now() - t) / 1000); if (s < 60) return "now"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; };
+const esc = (s = "") => String(s).replace(/[&<>]/g, c => ({ "&": "&", "<": "<", ">": ">" }[c]));
+const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n || 0);
+const ago = (t) => { const s = Math.max(1, (Date.now() - (t || Date.now())) / 1000); if (s < 60) return "now"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; };
 
 function toast(msg) {
   const t = $(".toast"); if (!t) return;
   t.textContent = msg; t.style.display = "block";
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", 1400);
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", 1600);
 }
-
 function shell(inner) {
   const me = api.me();
-  const notes = me ? api.db().notes.filter(n => n.user === me.id && !n.read).length : 0;
+  const unread = me ? api.db().notes.filter(n => n.user === me.id && !n.read).length : 0;
+  const chats = me ? api.db().convos.filter(c => c.members.includes(me.id) && c.messages.some(m => m.author !== me.id && !m.read)).length : 0;
   app.innerHTML = `<div class="stage"><div class="phone">
     ${inner}
     <nav class="nav">
-      <button data-tab="updates" class="${tab === "updates" ? "on" : ""}">⌂<span>Updates</span></button>
+      <button data-tab="updates" class="${tab === "updates" && !profileId ? "on" : ""}">⌂<span>Updates</span></button>
       <button data-tab="map" class="${tab === "map" ? "on" : ""}">⌖<span>Map</span></button>
       <button id="create-open"><span class="fab">+</span></button>
-      <button data-tab="chat" class="${tab === "chat" ? "on" : ""}">✎<span>Chat</span></button>
+      <button data-tab="chat" class="${tab === "chat" ? "on" : ""}">✎<span>Chat${chats ? " ·" : ""}</span></button>
       <button data-tab="settings" class="${tab === "settings" ? "on" : ""}">⚙<span>Settings</span></button>
     </nav>
     <div class="toast"></div>
     <div class="sheet" id="sheet"></div>
     <div class="storyview" id="storyview"></div>
+    ${unread ? "" : ""}
   </div></div>`;
-  app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; chatId = null; mapCity = null; profileId = null; render(); });
-  $("#create-open").onclick = openCreate;
+  app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; chatId = null; mapCity = null; profileId = null; viewer = null; render(); });
+  $("#create-open").onclick = () => openCreate();
 }
-
 function render() {
   if (!api.me()) return auth();
-  if (tab === "updates" && !profileId) return updates();
+  if (viewer) return postViewer(viewer);
   if (tab === "updates" && profileId) return profile(profileId);
+  if (tab === "updates") return updates();
   if (tab === "map") return map();
   if (tab === "chat") return chatId ? thread(chatId) : chats();
   if (tab === "search") return search();
@@ -60,17 +63,22 @@ function auth() {
   app.innerHTML = `<div class="stage"><div class="phone"><div class="auth">
     <div class="word" style="font-size:42px">Old Time</div>
     <p class="sub">Watch. Follow. Send. Find what’s nearby.</p>
-    <input class="field" id="email" placeholder="Email" value="you@oldtime.app" />
+    <input class="field" id="email" placeholder="Email or username" value="you@oldtime.app" />
     <input class="field" id="pass" type="password" placeholder="Password" value="oldtime" />
+    <p class="sub" id="err"></p>
     <button class="btn" id="login">Log in</button>
     <button class="btn ghost" id="google">Continue with Google</button>
     <button class="btn ghost" id="apple">Continue with Apple</button>
     <button class="btn ghost" id="signup">Create account</button>
     <button class="btn ghost" id="forgot">Forgot password</button>
   </div></div></div>`;
-  $("#login").onclick = () => { api.login($("#email").value.trim()); render(); };
-  $("#google").onclick = $("#apple").onclick = () => { api.login("you@oldtime.app"); toast("Signed in"); render(); };
-  $("#forgot").onclick = () => toast("Reset link sent");
+  $("#login").onclick = () => {
+    try { api.login($("#email").value.trim(), $("#pass").value); render(); }
+    catch (e) { $("#err").textContent = e.message; }
+  };
+  $("#google").onclick = () => { api.oauth("google"); render(); };
+  $("#apple").onclick = () => { api.oauth("apple"); render(); };
+  $("#forgot").onclick = forgot;
   $("#signup").onclick = signup;
 }
 function signup() {
@@ -79,6 +87,7 @@ function signup() {
     <input class="field" id="su-email" placeholder="Email" />
     <input class="field" id="su-user" placeholder="username" />
     <input class="field" id="su-name" placeholder="Display name" />
+    <input class="field" id="su-pass" type="password" placeholder="Password" />
     <input class="field" id="su-bday" type="date" />
     <input class="field" id="su-bio" placeholder="Bio (optional)" />
     <button class="btn" id="go">Create account</button>
@@ -88,40 +97,62 @@ function signup() {
   $("#back").onclick = auth;
   $("#go").onclick = () => {
     try {
-      api.signup({ email: $("#su-email").value, username: $("#su-user").value.toLowerCase(), name: $("#su-name").value, birthday: $("#su-bday").value, bio: $("#su-bio").value });
+      api.signup({ email: $("#su-email").value.trim(), username: $("#su-user").value.trim(), name: $("#su-name").value.trim(), password: $("#su-pass").value, birthday: $("#su-bday").value, bio: $("#su-bio").value.trim() });
       render();
     } catch (e) { $("#err").textContent = e.message; }
+  };
+}
+function forgot() {
+  app.innerHTML = `<div class="stage"><div class="phone"><div class="auth">
+    <div class="word">Reset password</div>
+    <input class="field" id="em" placeholder="Email" />
+    <input class="field" id="np" type="password" placeholder="New password" />
+    <button class="btn" id="go">Update password</button>
+    <button class="btn ghost" id="back">Back</button>
+    <p class="sub" id="err"></p>
+  </div></div></div>`;
+  $("#back").onclick = auth;
+  $("#go").onclick = () => {
+    const u = api.db().users.find(x => x.email === $("#em").value.trim());
+    if (!u) return $("#err").textContent = "No account for that email";
+    if ($("#np").value.length < 6) return $("#err").textContent = "Password needs 6+ characters";
+    mutate(db => { db.users.find(x => x.id === u.id).password = $("#np").value; db.resets.push({ email: u.email, at: Date.now() }); });
+    auth();
   };
 }
 
 function updates() {
   const me = api.me();
-  const stories = api.db().stories.filter(s => Date.now() - s.created < 864e5);
+  const stories = api.db().stories.filter(s => Date.now() - s.created < 864e5 && api.canSee(s.author));
+  const byAuthor = new Map();
+  stories.forEach(s => { if (!byAuthor.has(s.author)) byAuthor.set(s.author, s); });
   const posts = api.ranked(feedMode);
+  const unread = api.db().notes.filter(n => n.user === me.id && !n.read).length;
   shell(`<section class="screen on">
     <div class="topbar">
       <div class="word">Old Time</div>
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
-      <button class="icon" id="bell">◉${api.db().notes.some(n => n.user === me.id && !n.read) ? '<i class="badge"></i>' : ""}</button>
+      <div class="row"><button class="icon" id="search">⌕</button><button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button></div>
     </div>
-    <div class="stories">${storyBubble(me, true)}${stories.map(s => storyBubble(api.user(s.author), false, s.id)).join("")}</div>
-    <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing here yet. Follow someone, or post.</div>`}</div>
+    <div class="stories">
+      <button class="story" id="mystory"><div class="ring seen"><img src="${me.avatar}" alt="" /></div>Your story</button>
+      ${[...byAuthor.values()].map(s => `<button class="story" data-story="${s.author}"><div class="ring"><img src="${api.user(s.author).avatar}" alt="" /></div>${api.user(s.author).username}</button>`).join("")}
+    </div>
+    <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing in this feed yet. Follow someone, or post.</div>`}</div>
   </section>`);
   $("#bell").onclick = () => { tab = "notes"; render(); };
+  $("#search").onclick = () => { tab = "search"; render(); };
+  $("#mystory").onclick = () => openStory(me.id);
   app.querySelectorAll("[data-feed]").forEach(b => b.onclick = () => { feedMode = b.dataset.feed; render(); });
   app.querySelectorAll("[data-story]").forEach(b => b.onclick = () => openStory(b.dataset.story));
   bindPosts();
-  const vids = app.querySelectorAll("video");
+  const vids = [...app.querySelectorAll("video")];
   const io = new IntersectionObserver((ents) => ents.forEach(en => {
     const v = en.target;
-    if (en.isIntersecting) { v.play().catch(() => {}); markWatch(v.dataset.id, 0.7); }
+    if (en.isIntersecting) { v.muted = muted; v.play().catch(() => {}); watch(v.dataset.id); }
     else v.pause();
-  }), { threshold: 0.7 });
+  }), { threshold: 0.65 });
   vids.forEach(v => io.observe(v));
-}
-function storyBubble(user, mine, id) {
-  if (!user) return "";
-  return `<button class="story" data-story="${mine ? "me" : id}"><div class="ring ${mine ? "seen" : ""}"><img src="${user.avatar}" alt="" />${mine ? "" : ""}</div>${mine ? "Your story" : user.username}</button>`;
 }
 function postCard(p) {
   const u = api.user(p.author);
@@ -129,163 +160,178 @@ function postCard(p) {
   const liked = p.likes.includes(me.id);
   const saved = p.saves.includes(me.id);
   const following = me.following.includes(u.id) || u.id === me.id;
-  if (p.kind === "video") {
-    return `<article class="clip" data-id="${p.id}">
-      <video src="${p.media[0]}" data-id="${p.id}" loop playsinline muted></video>
-      <div class="shade"></div>
-      ${rail(p, liked, saved)}
-      <div class="meta">${head(u, following, p)}<div class="cap">${esc(p.caption)} <span class="tags">${(p.tags || []).map(t => "#" + t).join(" ")}</span></div><div class="sound">♫ ${esc(p.sound || "Original audio")}</div></div>
-    </article>`;
-  }
-  if (p.kind === "text") {
-    return `<article class="clip" data-id="${p.id}" style="background:${p.color}"><div class="textpost"><p>${esc(p.caption)}</p></div>${rail(p, liked, saved)}<div class="meta">${head(u, following, p)}</div></article>`;
-  }
-  const i = carouselIndex[p.id] || 0;
-  const src = p.media[i] || p.media[0];
-  return `<article class="clip" data-id="${p.id}">
-    <img class="fullimg" src="${src}" alt="" data-dbl="${p.id}" />
-    <div class="shade"></div>
-    ${rail(p, liked, saved)}
-    <div class="meta">${head(u, following, p)}<div class="cap">${esc(p.caption)} <span class="tags">${(p.tags || []).map(t => "#" + t).join(" ")}</span></div>
-    ${p.media.length > 1 ? `<div class="dots">${p.media.map((_, n) => `<i class="${n === i ? "on" : ""}" data-dot="${p.id}:${n}"></i>`).join("")}</div>` : ""}</div>
-  </article>`;
+  const media = p.kind === "video"
+    ? `<video src="${p.media[0]}" data-id="${p.id}" loop playsinline ${muted ? "muted" : ""}></video>`
+    : p.kind === "text"
+      ? `<div class="textpost" style="height:100%;background:${p.color}"><p>${esc(p.caption)}</p></div>`
+      : `<img class="fullimg" src="${p.media[carouselIndex[p.id] || 0]}" alt="" data-dbl="${p.id}" />`;
+  return `<article class="clip" data-id="${p.id}">${media}<div class="shade"></div>${rail(p, liked, saved, u)}
+    <div class="meta">${head(u, following, p)}
+      ${p.kind === "text" ? "" : `<div class="cap">${esc(p.caption)} <span class="tags">${(p.tags || []).map(t => "#" + t).join(" ")}</span></div>`}
+      <div class="sound">♫ ${esc(p.sound || "Original audio")} · ${esc(p.location || "")}</div>
+      ${p.media && p.media.length > 1 ? `<div class="dots">${p.media.map((_, n) => `<i class="${n === (carouselIndex[p.id] || 0) ? "on" : ""}" data-dot="${p.id}:${n}"></i>`).join("")}</div>` : ""}
+    </div></article>`;
 }
 function head(u, following, p) {
-  return `<div class="handle"><img src="${u.avatar}" alt="" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /> <button data-profile="${u.id}">@${u.username}</button> ${u.verified ? '<span class="tick">✓</span>' : ""} ${following ? "" : `<button class="followchip" data-follow="${u.id}">Follow</button>`}<span class="sub" style="margin-left:auto">${p.location || ""}</span></div>`;
+  return `<div class="handle"><img src="${u.avatar}" alt="" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /> <button data-profile="${u.id}">@${u.username}</button> ${u.verified ? '<span class="tick">✓</span>' : ""} ${following ? "" : `<button class="followchip" data-follow="${u.id}">Follow</button>`}</div>`;
 }
 function rail(p, liked, saved) {
   return `<div class="rail">
     <button class="act ${liked ? "on" : ""}" data-like="${p.id}"><span class="bubble">♥</span>${fmt(p.likes.length)}</button>
     <button class="act" data-comment="${p.id}"><span class="bubble">💬</span>${fmt(p.comments.length)}</button>
-    <button class="act" data-share="${p.id}"><span class="bubble">↗</span>Share</button>
+    <button class="act" data-share="${p.id}"><span class="bubble">↗</span>${fmt(p.shares || 0)}</button>
     <button class="act ${saved ? "on" : ""}" data-save="${p.id}"><span class="bubble">🔖</span>${fmt(p.saves.length)}</button>
-    <button data-sound="${p.id}" class="act"><span class="bubble">♫</span></button>
+    <button class="act" data-mute="${p.id}"><span class="bubble">${muted ? "🔇" : "🔊"}</span></button>
     <img class="avatar" src="${api.user(p.author).avatar}" data-profile="${p.author}" alt="" />
   </div>`;
 }
 function bindPosts() {
-  app.querySelectorAll("[data-like]").forEach(b => b.onclick = () => like(b.dataset.like));
-  app.querySelectorAll("[data-save]").forEach(b => b.onclick = () => save(b.dataset.save));
-  app.querySelectorAll("[data-comment]").forEach(b => b.onclick = () => comments(b.dataset.comment));
-  app.querySelectorAll("[data-share]").forEach(b => b.onclick = () => share(b.dataset.share));
-  app.querySelectorAll("[data-follow]").forEach(b => b.onclick = () => follow(b.dataset.follow));
-  app.querySelectorAll("[data-profile]").forEach(b => b.onclick = () => { profileId = b.dataset.profile; tab = "updates"; render(); });
-  app.querySelectorAll("[data-dot]").forEach(b => b.onclick = () => { const [id, n] = b.dataset.dot.split(":"); carouselIndex[id] = +n; render(); });
-  app.querySelectorAll("[data-dbl]").forEach(img => {
+  app.querySelectorAll("[data-like]").forEach(b => b.onclick = (e) => { e.stopPropagation(); like(b.dataset.like); });
+  app.querySelectorAll("[data-save]").forEach(b => b.onclick = (e) => { e.stopPropagation(); save(b.dataset.save); });
+  app.querySelectorAll("[data-comment]").forEach(b => b.onclick = (e) => { e.stopPropagation(); comments(b.dataset.comment); });
+  app.querySelectorAll("[data-share]").forEach(b => b.onclick = (e) => { e.stopPropagation(); share(b.dataset.share); });
+  app.querySelectorAll("[data-follow]").forEach(b => b.onclick = (e) => { e.stopPropagation(); follow(b.dataset.follow); });
+  app.querySelectorAll("[data-profile]").forEach(b => b.onclick = (e) => { e.stopPropagation(); profileId = b.dataset.profile; profileMode = "posts"; tab = "updates"; render(); });
+  app.querySelectorAll("[data-dot]").forEach(b => b.onclick = (e) => { e.stopPropagation(); const [id, n] = b.dataset.dot.split(":"); carouselIndex[id] = +n; render(); });
+  app.querySelectorAll("[data-mute]").forEach(b => b.onclick = (e) => { e.stopPropagation(); muted = !muted; render(); });
+  app.querySelectorAll("[data-dbl]").forEach(el => {
     let last = 0;
-    img.onclick = () => { const now = Date.now(); if (now - last < 280) like(img.dataset.dbl); last = now; };
+    el.onclick = () => { const now = Date.now(); if (now - last < 280) like(el.dataset.dbl); last = now; };
   });
-  app.querySelectorAll("[data-sound]").forEach(b => b.onclick = () => toast("Sound: " + (api.db().posts.find(p => p.id === b.dataset.sound).sound || "Original")));
-  const searchBtn = document.createElement("button");
+  app.querySelectorAll(".clip video").forEach(v => v.onclick = () => { if (v.paused) v.play(); else v.pause(); });
 }
 function like(id) {
   const me = api.me();
   mutate(db => {
     const p = db.posts.find(x => x.id === id);
     const i = p.likes.indexOf(me.id);
-    if (i >= 0) p.likes.splice(i, 1); else { p.likes.push(me.id); (p.tags || []).forEach(t => db.interests[t] = (db.interests[t] || 0) + 1); db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "like", actor: me.id, post: id, body: "liked your post", created: Date.now(), read: false }); }
+    if (i >= 0) p.likes.splice(i, 1);
+    else { p.likes.push(me.id); (p.tags || []).forEach(t => db.interests[t] = (db.interests[t] || 0) + 1); if (p.author !== me.id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "like", actor: me.id, post: id, body: "liked your post", created: Date.now(), read: false }); }
   });
   render();
 }
 function save(id) {
   const me = api.me();
-  mutate(db => {
-    const p = db.posts.find(x => x.id === id);
-    const i = p.saves.indexOf(me.id);
-    if (i >= 0) p.saves.splice(i, 1); else p.saves.push(me.id);
-  });
-  toast("Saved"); render();
+  mutate(db => { const p = db.posts.find(x => x.id === id); const i = p.saves.indexOf(me.id); if (i >= 0) p.saves.splice(i, 1); else p.saves.push(me.id); });
+  render();
 }
 function follow(id) {
   const me = api.me();
+  const u = api.user(id);
   mutate(db => {
-    const u = db.users.find(x => x.id === id);
-    if (me.following.includes(id)) { me.following = me.following.filter(x => x !== id); u.followers = u.followers.filter(x => x !== me.id); }
-    else { me.following.push(id); u.followers.push(me.id); db.notes.unshift({ id: "n" + Date.now(), user: id, kind: "follow", actor: me.id, body: "started following you", created: Date.now(), read: false }); }
+    const meU = db.users.find(x => x.id === me.id);
+    const them = db.users.find(x => x.id === id);
+    if (meU.following.includes(id)) {
+      meU.following = meU.following.filter(x => x !== id);
+      them.followers = them.followers.filter(x => x !== me.id);
+      db.requests = db.requests.filter(r => !(r.from === me.id && r.to === id));
+    } else if (them.private) {
+      if (!db.requests.some(r => r.from === me.id && r.to === id)) db.requests.push({ from: me.id, to: id, at: Date.now() });
+    } else {
+      meU.following.push(id); them.followers.push(me.id);
+      db.notes.unshift({ id: "n" + Date.now(), user: id, kind: "follow", actor: me.id, body: "started following you", created: Date.now(), read: false });
+    }
   });
+  toast(u.private && !api.me().following.includes(id) ? "Requested" : "Updated");
   render();
 }
 function share(id) {
-  const link = location.href.split("#")[0] + "#p=" + id;
+  const link = "https://oldtime.app/p/" + id;
   navigator.clipboard?.writeText(link);
-  mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
+  mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; if (p.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
   toast("Link copied");
+  render();
 }
-function markWatch(id, amount) { mutate(db => { const p = db.posts.find(x => x.id === id); if (p) p.watch = Math.min(1, (p.watch || 0) + amount * 0.05); }); }
+function watch(id) { mutate(db => { const p = db.posts.find(x => x.id === id); if (p) { p.watch = Math.min(1, (p.watch || 0) + 0.08); p.views = (p.views || 0) + 1; } }); }
 
 function comments(id) {
-  activePost = id;
-  const p = api.db().posts.find(x => x.id === id);
   const sheet = $("#sheet");
   sheet.classList.add("on");
-  sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>Comments</b><div id="clist" style="margin:10px 0"></div>
-    <form id="cform" class="row"><input class="field" id="cbody" placeholder="Add a comment" /><button class="btn small" type="submit">Send</button></form></div>`;
   const draw = () => {
-    $("#clist").innerHTML = p.comments.map(c => `<div style="margin:8px 0"><div class="row"><img src="${api.user(c.author).avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(c.author).username}</b> ${esc(c.body)}<div class="sub">${ago(c.created || Date.now())} · <button data-reply="${c.id}">Reply</button> · <button data-clike="${c.id}">♥ ${c.likes.length}</button> ${c.author === api.me().id || p.author === api.me().id ? `<button data-cdel="${c.id}">Delete</button>` : ""}</div></div></div>${(c.replies || []).map(r => `<div class="sub" style="margin-left:36px">@${api.user(r.author).username} ${esc(r.body)}</div>`).join("")}</div>`).join("") || `<div class="sub">No comments yet.</div>`;
-    $("#clist").querySelectorAll("[data-reply]").forEach(b => b.onclick = () => { $("#cbody").value = "@" + api.user(p.comments.find(c => c.id === b.dataset.reply).author).username + " "; $("#cbody").dataset.reply = b.dataset.reply; });
-    $("#clist").querySelectorAll("[data-clike]").forEach(b => b.onclick = () => { mutate(() => { const c = p.comments.find(x => x.id === b.dataset.clike); const i = c.likes.indexOf(api.me().id); if (i >= 0) c.likes.splice(i, 1); else c.likes.push(api.me().id); }); draw(); });
-    $("#clist").querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => { mutate(() => { p.comments = p.comments.filter(c => c.id !== b.dataset.cdel); }); draw(); });
+    const p = api.db().posts.find(x => x.id === id);
+    sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>Comments</b><div id="clist" style="margin:10px 0;max-height:46vh;overflow:auto"></div>
+      <form id="cform" class="row"><input class="field" id="cbody" placeholder="Add a comment" /><button class="btn small" type="submit">Send</button></form></div>`;
+    $("#clist").innerHTML = p.comments.map(c => `<div style="margin:10px 0"><div class="row" style="align-items:flex-start"><img src="${api.user(c.author).avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(c.author).username}</b> ${esc(c.body)}<div class="sub">${ago(c.created)} · <button data-reply="${c.id}">Reply</button> · <button data-clike="${c.id}">♥ ${c.likes.length}</button> ${c.author === api.me().id || p.author === api.me().id ? `<button data-cdel="${c.id}">Delete</button>` : ""}</div>${(c.replies || []).map(r => `<div class="sub" style="margin-top:4px">@${api.user(r.author).username} ${esc(r.body)} ${r.author === api.me().id ? `<button data-rdel="${c.id}:${r.id}">Delete</button>` : ""}</div>`).join("")}</div></div></div>`).join("") || `<div class="sub">No comments yet.</div>`;
+    $("#clist").querySelectorAll("[data-reply]").forEach(b => b.onclick = () => { $("#cbody").value = "@" + api.user(p.comments.find(c => c.id === b.dataset.reply).author).username + " "; $("#cbody").dataset.reply = b.dataset.reply; $("#cbody").focus(); });
+    $("#clist").querySelectorAll("[data-clike]").forEach(b => b.onclick = () => { mutate(db => { const c = db.posts.find(x => x.id === id).comments.find(x => x.id === b.dataset.clike); const i = c.likes.indexOf(api.me().id); if (i >= 0) c.likes.splice(i, 1); else c.likes.push(api.me().id); }); draw(); });
+    $("#clist").querySelectorAll("[data-cdel]").forEach(b => b.onclick = () => { mutate(db => { const post = db.posts.find(x => x.id === id); post.comments = post.comments.filter(c => c.id !== b.dataset.cdel); }); draw(); });
+    $("#clist").querySelectorAll("[data-rdel]").forEach(b => b.onclick = () => { const [cid, rid] = b.dataset.rdel.split(":"); mutate(db => { const c = db.posts.find(x => x.id === id).comments.find(x => x.id === cid); c.replies = c.replies.filter(r => r.id !== rid); }); draw(); });
+    $("#cform").onsubmit = (e) => {
+      e.preventDefault();
+      const body = $("#cbody").value.trim(); if (!body) return;
+      const parent = $("#cbody").dataset.reply;
+      mutate(db => {
+        const post = db.posts.find(x => x.id === id);
+        if (parent) { const c = post.comments.find(x => x.id === parent); c.replies = c.replies || []; c.replies.push({ id: "r" + Date.now(), author: api.me().id, body, created: Date.now() }); }
+        else post.comments.push({ id: "c" + Date.now(), author: api.me().id, body, likes: [], replies: [], created: Date.now() });
+        if (post.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: post.author, kind: parent ? "reply" : "comment", actor: api.me().id, post: id, body: (parent ? "replied: " : "commented: ") + body.slice(0, 80), created: Date.now(), read: false });
+      });
+      draw();
+    };
+    sheet.onclick = (e) => { if (e.target === sheet) { sheet.classList.remove("on"); render(); } };
   };
   draw();
-  $("#cform").onsubmit = (e) => {
-    e.preventDefault();
-    const body = $("#cbody").value.trim(); if (!body) return;
-    mutate(db => {
-      const post = db.posts.find(x => x.id === id);
-      const parent = $("#cbody").dataset.reply;
-      if (parent) { const c = post.comments.find(x => x.id === parent); c.replies = c.replies || []; c.replies.push({ id: "r" + Date.now(), author: api.me().id, body }); }
-      else post.comments.push({ id: "c" + Date.now(), author: api.me().id, body, likes: [], replies: [], created: Date.now() });
-      db.notes.unshift({ id: "n" + Date.now(), user: post.author, kind: "comment", actor: api.me().id, post: id, body: "commented: " + body.slice(0, 60), created: Date.now(), read: false });
-    });
-    $("#cbody").value = ""; draw();
-  };
-  sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
 
-function openStory(id) {
-  const me = api.me();
-  const list = id === "me" ? api.db().stories.filter(s => s.author === me.id) : api.db().stories.filter(s => s.id === id);
-  if (!list.length) { openCreate(); createKind = "story"; return; }
-  const s = list[0];
+function openStory(authorId) {
+  const list = api.db().stories.filter(s => s.author === authorId && Date.now() - s.created < 864e5);
+  if (!list.length) { createKind = "story"; openCreate(); return; }
+  let i = 0;
   const view = $("#storyview");
   view.classList.add("on");
-  view.innerHTML = `<div class="progress"><b id="bar"></b></div><button id="sclose" style="position:absolute;top:22px;right:12px;color:#fff">✕</button>
-    <div style="height:100%;background:${s.color || "#000"}">${s.media ? `<img src="${s.media}" style="width:100%;height:100%;object-fit:cover" />` : ""}<div style="position:absolute;left:16px;bottom:80px;font-size:28px;font-family:Fraunces,serif">${esc(s.text || "")}</div></div>`;
-  $("#sclose").onclick = () => { view.classList.remove("on"); clearInterval(storyTimer); };
-  let w = 0; const bar = $("#bar");
-  storyTimer = setInterval(() => { w += 2; bar.style.width = w + "%"; if (w >= 100) { clearInterval(storyTimer); view.classList.remove("on"); } }, 80);
+  const show = () => {
+    const s = list[i]; if (!s) { view.classList.remove("on"); return; }
+    view.innerHTML = `<div class="progress"><b id="bar"></b></div>
+      <div class="row" style="position:absolute;top:24px;left:12px;right:48px;z-index:2"><img src="${api.user(s.author).avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>@${api.user(s.author).username}</b></div>
+      <button id="sclose" style="position:absolute;top:22px;right:12px;z-index:2">✕</button>
+      <div style="height:100%;background:${s.color || "#000"}">${s.media ? (String(s.media).startsWith("data:video") || s.kind === "video" ? `<video src="${s.media}" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover"></video>` : `<img src="${s.media}" style="width:100%;height:100%;object-fit:cover" />`) : ""}<div style="position:absolute;left:16px;bottom:90px;font-size:28px;font-family:Fraunces,serif">${esc(s.text || "")}</div></div>`;
+    $("#sclose").onclick = () => { view.classList.remove("on"); clearInterval(storyTimer); };
+    let w = 0; clearInterval(storyTimer);
+    storyTimer = setInterval(() => { w += 2; const bar = $("#bar"); if (bar) bar.style.width = w + "%"; if (w >= 100) { i++; show(); } }, 90);
+  };
+  show();
 }
 
 function openCreate() {
   const sheet = $("#sheet");
   sheet.classList.add("on");
-  sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>Create</b>
-    <div class="seg" id="kinds"><button data-k="video">Video</button><button data-k="photo">Photo</button><button data-k="carousel">Carousel</button><button data-k="text">Text</button><button data-k="story">Story</button></div>
-    <textarea class="field" id="cap" placeholder="Caption"></textarea>
-    <input class="field" id="tags" placeholder="hashtags, separated by spaces" style="margin-top:8px" />
-    <input class="field" id="loc" placeholder="Location" style="margin-top:8px" value="Miami" />
-    <div class="row" style="margin:8px 0"><button class="btn ghost small" id="pick">Upload</button><input id="file" type="file" accept="image/*,video/*" multiple hidden /><span class="sub" id="picked">No file yet</span></div>
-    <video id="prev" controls style="width:100%;max-height:180px;display:none;border-radius:12px"></video>
+  sheet.innerHTML = `<div class="panel" style="max-height:94%"><div class="grab"></div><b>Create</b>
+    <div class="seg" id="kinds">
+      <button data-k="video">Video</button><button data-k="photo">Photo</button><button data-k="carousel">Carousel</button><button data-k="text">Text</button><button data-k="story">Story</button>
+    </div>
+    <textarea class="field" id="cap" placeholder="Caption, with #tags or @names"></textarea>
+    <input class="field" id="loc" placeholder="Location" style="margin-top:8px" value="${api.me().city || "Miami"}" />
+    <select class="field" id="vis" style="margin-top:8px"><option value="public">Public</option><option value="followers">Followers</option></select>
+    <div class="row" style="margin:8px 0;flex-wrap:wrap"><button class="btn ghost small" id="pick">Upload</button><button class="btn ghost small" id="rec">Record</button><input id="file" type="file" accept="image/*,video/*" multiple hidden /><input id="cam" type="file" accept="video/*,image/*" capture="environment" hidden /><span class="sub" id="picked">No file yet</span></div>
+    <video id="prev" controls style="width:100%;max-height:160px;display:none;border-radius:12px"></video>
+    <img id="pimg" style="width:100%;max-height:160px;object-fit:cover;display:none;border-radius:12px" />
+    <label class="sub">Trim end (seconds, optional) <input class="field" id="trim" type="number" min="1" placeholder="full" /></label>
     <button class="btn" id="post" style="margin-top:10px">Post</button></div>`;
   const paint = () => sheet.querySelectorAll("#kinds button").forEach(b => b.classList.toggle("on", b.dataset.k === createKind));
   paint();
   sheet.querySelector("#kinds").onclick = (e) => { const b = e.target.closest("[data-k]"); if (!b) return; createKind = b.dataset.k; paint(); };
   $("#pick").onclick = () => $("#file").click();
-  $("#file").onchange = () => {
-    pending = [...$("#file").files].map(f => ({ url: URL.createObjectURL(f), video: f.type.startsWith("video") }));
-    $("#picked").textContent = pending.length + " file(s)";
-    if (pending[0]?.video) { $("#prev").style.display = "block"; $("#prev").src = pending[0].url; }
+  $("#rec").onclick = () => $("#cam").click();
+  const take = async (files) => {
+    pending = [];
+    for (const f of files) pending.push(await fileToData(f));
+    $("#picked").textContent = pending.length + " ready";
+    if (pending[0]?.video) { $("#prev").style.display = "block"; $("#prev").src = pending[0].url; $("#pimg").style.display = "none"; }
+    else if (pending[0]) { $("#pimg").style.display = "block"; $("#pimg").src = pending[0].url; $("#prev").style.display = "none"; }
   };
-  $("#post").onclick = () => {
+  $("#file").onchange = () => take([...$("#file").files]);
+  $("#cam").onchange = () => take([...$("#cam").files]);
+  $("#post").onclick = async () => {
     const caption = $("#cap").value.trim();
-    if (!caption && createKind !== "story") return toast("Add a caption");
-    if ((createKind === "video" || createKind === "photo" || createKind === "carousel") && !pending.length) return toast("Add media");
+    const tags = [...caption.matchAll(/#([a-z0-9_]+)/gi)].map(m => m[1].toLowerCase());
+    if (!caption && createKind !== "photo" && createKind !== "video") return toast("Add a caption");
+    if (["video", "photo", "carousel"].includes(createKind) && !pending.length) return toast("Add a photo or video");
+    const trim = Number($("#trim").value) || 0;
     mutate(db => {
-      const item = { id: "p" + Date.now(), author: api.me().id, kind: createKind === "story" ? "photo" : createKind, caption, tags: $("#tags").value.split(/[#\s]+/).filter(Boolean), media: pending.map(p => p.url), sound: "Original audio", location: $("#loc").value, likes: [], comments: [], saves: [], created: Date.now(), views: 0 };
-      if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : "text", media: pending[0]?.url || "", text: caption, created: Date.now(), color: "#1b140c" });
-      else db.posts.unshift(item);
+      if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : (pending[0] ? "photo" : "text"), media: pending[0]?.url || "", text: caption, created: Date.now(), color: "#1b140c" });
+      else db.posts.unshift({ id: "p" + Date.now(), author: api.me().id, kind: createKind, caption: caption || " ", tags, media: pending.map(p => p.url), sound: "Original audio", location: $("#loc").value || api.me().city, visibility: $("#vis").value, trim, likes: [], comments: [], saves: [], created: Date.now(), views: 0, shares: 0, color: "linear-gradient(160deg,#1b140c,#3a2a18)" });
     });
-    pending = []; sheet.classList.remove("on"); toast("Posted"); tab = "updates"; render();
+    pending = []; sheet.classList.remove("on"); toast("Posted"); tab = "updates"; profileId = null; render();
   };
   sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
@@ -293,140 +339,203 @@ function openCreate() {
 function profile(id) {
   const u = api.user(id);
   const me = api.me();
-  const posts = api.db().posts.filter(p => p.author === u.id && p.kind !== "text");
+  if (!u) { profileId = null; return updates(); }
+  const locked = u.private && u.id !== me.id && !u.followers.includes(me.id);
+  const posts = api.db().posts.filter(p => p.author === u.id);
   const videos = posts.filter(p => p.kind === "video");
   const saved = api.db().posts.filter(p => p.saves.includes(u.id));
   const mine = u.id === me.id;
-  const mode = profile.mode || "posts";
-  const grid = (mode === "videos" ? videos : mode === "saved" && mine ? saved : posts);
+  const grid = locked ? [] : (profileMode === "videos" ? videos : profileMode === "saved" && mine ? saved : posts);
+  const requested = api.db().requests.some(r => r.from === me.id && r.to === u.id);
   shell(`<section class="screen on"><div class="scroll page">
     <button class="sub" id="back">← Updates</button>
-    <div class="row" style="margin:12px 0">
+    <div class="row" style="margin:12px 0;align-items:flex-start">
       <img src="${u.avatar}" style="width:78px;height:78px;border-radius:50%;object-fit:cover" />
-      <div><b>${esc(u.name)}</b> ${u.verified ? '<span class="tick">✓</span>' : ""}<div class="sub">@${u.username}</div><div class="sub">${esc(u.bio)}</div></div>
+      <div><b>${esc(u.name)}</b> ${u.verified ? '<span class="tick">✓</span>' : ""}<div class="sub">@${u.username}${u.private ? " · private" : ""}</div><div>${esc(u.bio || "")}</div></div>
     </div>
-    <div class="row" style="gap:16px;margin-bottom:10px"><div><b>${fmt(u.followers.length)}</b><div class="sub">Followers</div></div><div><b>${fmt(u.following.length)}</b><div class="sub">Following</div></div><div><b>${fmt(api.db().posts.filter(p => p.author === u.id).reduce((n, p) => n + p.likes.length, 0))}</b><div class="sub">Likes</div></div></div>
-    ${mine ? "" : `<div class="row"><button class="btn small" id="pfollow">${me.following.includes(u.id) ? "Following" : "Follow"}</button><button class="btn ghost small" id="pmsg">Message</button><button class="btn ghost small" id="prep">Report</button>${u.private ? "" : ""}</div>`}
-    <div class="seg"><button data-m="posts" class="${mode === "posts" ? "on" : ""}">Posts</button><button data-m="videos" class="${mode === "videos" ? "on" : ""}">Videos</button>${mine ? `<button data-m="saved" class="${mode === "saved" ? "on" : ""}">Saved</button>` : ""}</div>
-    <div class="grid3">${grid.map(p => `<button class="cell" data-open="${p.id}">${p.media?.[0] ? (p.kind === "video" ? `<video src="${p.media[0]}" muted></video>` : `<img src="${p.media[0]}" />`) : `<div class="textpost"><p>${esc(p.caption.slice(0, 40))}</p></div>`}</button>`).join("") || `<div class="empty">No posts yet.</div>`}</div>
+    <div class="row" style="gap:16px;margin-bottom:10px"><div><b>${fmt(u.followers.length)}</b><div class="sub">Followers</div></div><div><b>${fmt(u.following.length)}</b><div class="sub">Following</div></div><div><b>${fmt(posts.reduce((n, p) => n + p.likes.length, 0))}</b><div class="sub">Likes</div></div></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">${mine ? `<button class="btn small" id="edit">Edit profile</button>` : `<button class="btn small" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "Follow"}</button><button class="btn ghost small" id="pmsg">Message</button><button class="btn ghost small" id="pblock">${api.db().blocks.some(b => b.by === me.id && b.who === u.id) ? "Unblock" : "Block"}</button><button class="btn ghost small" id="prep">Report</button>`}</div>
+    ${locked ? `<div class="empty">This account is private. Follow to see posts.</div>` : `<div class="seg"><button data-m="posts" class="${profileMode === "posts" ? "on" : ""}">Posts</button><button data-m="videos" class="${profileMode === "videos" ? "on" : ""}">Videos</button>${mine ? `<button data-m="saved" class="${profileMode === "saved" ? "on" : ""}">Saved</button>` : ""}</div><div class="grid3">${grid.map(p => `<button class="cell" data-open="${p.id}">${p.kind === "text" ? `<div class="textpost" style="height:100%;background:${p.color}"><p style="font-size:14px">${esc(p.caption.slice(0, 42))}</p></div>` : p.kind === "video" ? `<video src="${p.media[0]}" muted></video>` : `<img src="${p.media[0]}" alt="" />`}<span class="tag" style="position:absolute;left:4px;bottom:4px;font-size:10px;background:#0008;padding:2px 5px;border-radius:8px">${p.kind}</span></button>`).join("") || `<div class="empty">Nothing here.</div>`}</div>`}
   </div></section>`);
   $("#back").onclick = () => { profileId = null; render(); };
-  app.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { profile.mode = b.dataset.m; render(); });
+  app.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { profileMode = b.dataset.m; render(); });
   $("#pfollow") && ($("#pfollow").onclick = () => follow(u.id));
-  $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo(u.id); render(); });
-  $("#prep") && ($("#prep").onclick = () => { mutate(db => db.reports.push({ id: "r" + Date.now(), by: me.id, target: u.id, reason: "profile" })); toast("Reported"); });
-  app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { tab = "updates"; profileId = null; feedMode = "foryou"; render(); });
+  $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo([u.id]); render(); });
+  $("#pblock") && ($("#pblock").onclick = () => { mutate(db => { const i = db.blocks.findIndex(b => b.by === me.id && b.who === u.id); if (i >= 0) db.blocks.splice(i, 1); else db.blocks.push({ by: me.id, who: u.id }); }); render(); });
+  $("#prep") && ($("#prep").onclick = () => { mutate(db => db.reports.push({ id: "rp" + Date.now(), by: me.id, target: u.id, reason: "profile", at: Date.now() })); toast("Reported"); });
+  $("#edit") && ($("#edit").onclick = editProfile);
+  app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { viewer = b.dataset.open; render(); });
 }
-function ensureConvo(uid) {
+function editProfile() {
   const me = api.me();
-  let c = api.db().convos.find(x => x.members.length === 2 && x.members.includes(me.id) && x.members.includes(uid));
-  if (!c) { c = { id: "cv" + Date.now(), members: [me.id, uid], messages: [] }; mutate(db => db.convos.unshift(c)); }
+  const sheet = $("#sheet");
+  sheet.classList.add("on");
+  sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>Edit profile</b>
+    <input class="field" id="nm" value="${esc(me.name)}" placeholder="Name" />
+    <input class="field" id="un" value="${esc(me.username)}" placeholder="username" style="margin-top:8px" />
+    <input class="field" id="em" value="${esc(me.email || "")}" placeholder="Email" style="margin-top:8px" />
+    <textarea class="field" id="bio" style="margin-top:8px">${esc(me.bio || "")}</textarea>
+    <input class="field" id="city" value="${esc(me.city || "")}" placeholder="City" style="margin-top:8px" />
+    <button class="btn" id="savep" style="margin-top:10px">Save</button></div>`;
+  $("#savep").onclick = () => {
+    const username = $("#un").value.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) return toast("Bad username");
+    if (api.db().users.some(u => u.username === username && u.id !== me.id)) return toast("Username taken");
+    mutate(db => { const u = db.users.find(x => x.id === me.id); Object.assign(u, { name: $("#nm").value.trim(), username, email: $("#em").value.trim(), bio: $("#bio").value.trim(), city: $("#city").value.trim() }); });
+    sheet.classList.remove("on"); render();
+  };
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
+}
+function postViewer(id) {
+  const p = api.db().posts.find(x => x.id === id);
+  if (!p) { viewer = null; return profile(profileId); }
+  shell(`<section class="screen on"><div class="topbar"><button id="back">←</button><b>@${api.user(p.author).username}</b><span></span></div><div class="feed">${postCard(p)}</div></section>`);
+  $("#back").onclick = () => { viewer = null; render(); };
+  bindPosts();
+}
+function ensureConvo(ids) {
+  const me = api.me();
+  const members = [me.id, ...ids.filter(id => id !== me.id)];
+  let c = api.db().convos.find(x => x.members.length === members.length && members.every(id => x.members.includes(id)));
+  if (!c) { c = { id: "cv" + Date.now(), members, messages: [] }; mutate(db => db.convos.unshift(c)); }
   return c.id;
 }
 
 function chats() {
   const me = api.me();
   shell(`<section class="screen on"><div class="scroll page"><div class="h1">Chat</div>
-    ${api.db().convos.filter(c => c.members.includes(me.id)).map(c => {
-      const others = c.members.filter(id => id !== me.id).map(api.user);
+    ${api.db().convos.filter(c => c.members.includes(me.id) && !c.members.some(id => api.db().blocks.some(b => b.by === me.id && b.who === id))).map(c => {
+      const others = c.members.filter(id => id !== me.id).map(api.user).filter(Boolean);
       const last = c.messages[c.messages.length - 1];
-      return `<button class="listbtn" data-cv="${c.id}"><img src="${others[0].avatar}" style="width:44px;height:44px;border-radius:50%;object-fit:cover" /><div><b>${c.title || others.map(o => o.name).join(", ")}</b><div class="sub">${last ? esc(last.body) : "Say something"}</div></div></button>`;
+      return `<button class="listbtn" data-cv="${c.id}"><img src="${others[0]?.avatar || ""}" style="width:44px;height:44px;border-radius:50%;object-fit:cover" /><div><b>${esc(c.title || others.map(o => o.name).join(", "))}</b><div class="sub">${last ? esc(last.body).slice(0, 60) : "Say something"} · ${last ? ago(last.created) : ""}</div></div></button>`;
     }).join("")}
-    <button class="btn" id="newchat" style="margin-top:12px">New chat</button>
+    <button class="btn" id="newchat" style="margin-top:12px">New message</button>
+    <button class="btn ghost" id="newgroup" style="margin-top:8px">New group</button>
   </div></section>`);
   app.querySelectorAll("[data-cv]").forEach(b => b.onclick = () => { chatId = b.dataset.cv; render(); });
-  $("#newchat").onclick = () => {
-    const name = prompt("Username to message");
-    const u = api.user(name);
-    if (!u) return toast("No user");
-    chatId = ensureConvo(u.id); render();
+  $("#newchat").onclick = () => pickPeople(false);
+  $("#newgroup").onclick = () => pickPeople(true);
+}
+function pickPeople(group) {
+  const sheet = $("#sheet");
+  const picked = new Set();
+  sheet.classList.add("on");
+  const draw = () => {
+    sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>${group ? "New group" : "New message"}</b>
+      ${group ? `<input class="field" id="gtitle" placeholder="Group name" style="margin:8px 0" />` : ""}
+      ${api.db().users.filter(u => u.id !== api.me().id).map(u => `<button class="listbtn" data-pick="${u.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b>${picked.has(u.id) ? " · added" : ""}</div></button>`).join("")}
+      <button class="btn" id="start">Start</button></div>`;
+    sheet.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { if (group) picked.has(b.dataset.pick) ? picked.delete(b.dataset.pick) : picked.add(b.dataset.pick); else picked.clear() || picked.add(b.dataset.pick); draw(); });
+    $("#start").onclick = () => {
+      if (!picked.size) return toast("Pick someone");
+      const id = ensureConvo([...picked]);
+      if (group && $("#gtitle")?.value) mutate(db => { db.convos.find(c => c.id === id).title = $("#gtitle").value.trim(); });
+      sheet.classList.remove("on"); chatId = id; render();
+    };
   };
+  draw();
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
 function thread(id) {
   const c = api.db().convos.find(x => x.id === id);
   const me = api.me();
-  shell(`<section class="screen on"><div class="topbar"><button id="back">←</button><b>${c.title || c.members.filter(i => i !== me.id).map(i => api.user(i).name).join(", ")}</b><span></span></div>
-    <div class="scroll" id="msgs" style="padding:12px">${c.messages.map(m => `<div class="bubble-msg ${m.author === me.id ? "mine" : "theirs"}">${esc(m.body)}<div class="sub">${m.read ? "Read" : "Sent"} · <button data-del="${m.id}">Delete</button></div></div>`).join("")}<div class="sub" id="typing"></div></div>
-    <form id="send" class="row" style="padding:8px 12px 86px"><input class="field" id="msg" placeholder="Message" /><button class="btn small">Send</button></form>
+  mutate(db => db.convos.find(x => x.id === id).messages.forEach(m => { if (m.author !== me.id) m.read = true; }));
+  shell(`<section class="screen on"><div class="topbar"><button id="back">←</button><b>${esc(c.title || c.members.filter(i => i !== me.id).map(i => api.user(i)?.name).join(", "))}</b><span></span></div>
+    <div class="scroll" id="msgs" style="padding:12px">${c.messages.map(m => `<div class="bubble-msg ${m.author === me.id ? "mine" : "theirs"}">${m.media ? (String(m.media).includes("video") ? `<video src="${m.media}" controls style="width:180px;border-radius:10px"></video>` : `<img src="${m.media}" style="width:180px;border-radius:10px" />`) : ""}<div>${esc(m.body || "")}</div><div class="sub">${m.read ? "Read" : "Sent"} · ${ago(m.created)} ${m.author === me.id ? `<button data-del="${m.id}">Delete</button>` : `<button data-reply="${m.id}">Reply</button>`}</div></div>`).join("")}<div class="sub" id="typing"></div></div>
+    <form id="send" class="row" style="padding:8px 12px 86px;gap:6px"><button type="button" id="emoji">☺</button><button type="button" id="mic">🎤</button><button type="button" id="pic">＋</button><input id="mfile" type="file" accept="image/*,video/*" hidden /><input class="field" id="msg" placeholder="Message" /><button class="btn small">Send</button></form>
   </section>`);
   $("#back").onclick = () => { chatId = null; render(); };
-  $("#msgs").scrollTop = 9999;
-  $("#send").onsubmit = (e) => {
-    e.preventDefault();
-    const body = $("#msg").value.trim(); if (!body) return;
-    mutate(db => db.convos.find(x => x.id === id).messages.push({ id: "m" + Date.now(), author: me.id, body, created: Date.now(), read: false }));
+  $("#msgs").scrollTop = 99999;
+  let replyTo = "";
+  $("#emoji").onclick = () => { $("#msg").value += " ✦"; $("#msg").focus(); };
+  $("#mic").onclick = () => send("Voice message", null);
+  $("#pic").onclick = () => $("#mfile").click();
+  $("#mfile").onchange = async () => { const f = $("#mfile").files[0]; if (!f) return; const d = await fileToData(f); send(f.type.startsWith("video") ? "Video" : "Photo", d.url); };
+  app.querySelectorAll("[data-reply]").forEach(b => b.onclick = () => { replyTo = c.messages.find(m => m.id === b.dataset.reply)?.body || ""; $("#msg").value = "↩ " + replyTo.slice(0, 40) + " "; $("#msg").focus(); });
+  app.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { mutate(db => { const cv = db.convos.find(x => x.id === id); cv.messages = cv.messages.filter(m => m.id !== b.dataset.del); }); render(); });
+  $("#send").onsubmit = (e) => { e.preventDefault(); send($("#msg").value.trim(), null); };
+  $("#msg").oninput = () => { $("#typing").textContent = ""; };
+  function send(body, media) {
+    if (!body && !media) return;
+    mutate(db => db.convos.find(x => x.id === id).messages.push({ id: "m" + Date.now(), author: me.id, body, media, created: Date.now(), read: false }));
     render();
-    setTimeout(() => { const t = $("#typing"); if (t) t.textContent = "typing…"; }, 200);
-  };
-  app.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { mutate(db => { const cv = db.convos.find(x => x.id === id); cv.messages = cv.messages.filter(m => m.id !== b.dataset.del || m.author !== me.id); }); render(); });
+  }
 }
 
 function map() {
-  const cities = [
-    { name: "Miami", x: "62%", y: "68%" },
-    { name: "New York", x: "74%", y: "32%" },
-    { name: "Chicago", x: "52%", y: "38%" },
-    { name: "Los Angeles", x: "18%", y: "48%" }
-  ];
+  const cities = [{ name: "Miami", x: "62%", y: "68%" }, { name: "New York", x: "74%", y: "32%" }, { name: "Chicago", x: "52%", y: "38%" }, { name: "Los Angeles", x: "18%", y: "48%" }];
   if (mapCity) {
-    const posts = api.posts().filter(p => p.location === mapCity);
-    shell(`<section class="screen on"><div class="scroll page"><button id="back" class="sub">← Map</button><div class="h1">${mapCity}</div><p class="sub">Public posts from this area</p>
-      ${posts.map(p => `<button class="listbtn" data-open="${p.id}"><img src="${p.media[0] || api.user(p.author).avatar}" style="width:54px;height:54px;object-fit:cover;border-radius:10px" /><div><b>@${api.user(p.author).username}</b><div class="sub">${esc(p.caption)}</div></div></button>`).join("") || `<div class="empty">No public posts here yet.</div>`}
+    const posts = api.posts().filter(p => (p.location || "") === mapCity);
+    shell(`<section class="screen on"><div class="scroll page"><button id="back" class="sub">← Map</button><div class="h1">${mapCity}</div><p class="sub">${posts.length} public posts</p>
+      ${posts.map(p => `<button class="listbtn" data-open="${p.id}"><img src="${p.media?.[0] || api.user(p.author).avatar}" style="width:54px;height:54px;object-fit:cover;border-radius:10px" /><div><b>@${api.user(p.author).username}</b> · ${p.kind}<div class="sub">${esc(p.caption)}</div></div></button>`).join("") || `<div class="empty">No public posts here yet. Post with this city to pin it.</div>`}
     </div></section>`);
     $("#back").onclick = () => { mapCity = null; render(); };
+    app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { viewer = b.dataset.open; tab = "updates"; profileId = api.db().posts.find(p => p.id === b.dataset.open).author; render(); });
     return;
   }
-  shell(`<section class="screen on"><div class="topbar"><div class="word">Map</div><span class="sub">Nearby</span></div>
-    <div class="mapwrap">${cities.map(c => `<button class="pin" style="left:${c.x};top:${c.y}" data-city="${c.name}"><i>${c.name}</i></button>`).join("")}</div>
+  shell(`<section class="screen on"><div class="topbar"><div class="word">Map</div><button class="icon" id="near">◎</button></div>
+    <div class="mapwrap">${cities.map(c => `<button class="pin" style="left:${c.x};top:${c.y}" data-city="${c.name}"><i>${c.name}<br>${api.posts().filter(p => p.location === c.name).length}</i></button>`).join("")}</div>
   </section>`);
   app.querySelectorAll("[data-city]").forEach(b => b.onclick = () => { mapCity = b.dataset.city; render(); });
+  $("#near").onclick = () => { mapCity = api.me().city || "Miami"; render(); };
 }
 
 function search() {
-  const q = searchQ.toLowerCase();
-  const users = api.db().users.filter(u => !q || u.username.includes(q) || u.name.toLowerCase().includes(q));
+  const q = searchQ.toLowerCase().replace("#", "");
+  const users = api.db().users.filter(u => u.id !== api.me().id && (!q || u.username.includes(q) || u.name.toLowerCase().includes(q)));
   const posts = api.posts().filter(p => !q || p.caption.toLowerCase().includes(q) || (p.tags || []).some(t => t.includes(q)) || (p.location || "").toLowerCase().includes(q));
-  shell(`<section class="screen on"><div class="scroll page"><div class="h1">Search</div>
-    <input class="search" id="q" placeholder="People, posts, tags, places" value="${esc(searchQ)}" />
-    <div class="sub">Suggested</div>
-    ${users.slice(0, 6).map(u => `<button class="listbtn" data-profile="${u.id}"><img src="${u.avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b><div class="sub">${esc(u.bio)}</div></div></button>`).join("")}
-    <div class="grid3" style="margin-top:10px">${posts.slice(0, 9).map(p => `<div class="cell">${p.media[0] ? `<img src="${p.media[0]}" />` : ""}</div>`).join("")}</div>
+  const tags = [...new Set(api.posts().flatMap(p => p.tags || []))].filter(t => !q || t.includes(q)).slice(0, 8);
+  shell(`<section class="screen on"><div class="scroll page"><button class="sub" id="back">← Updates</button><div class="h1">Search</div>
+    <input class="search" id="q" placeholder="People, posts, #tags, places" value="${esc(searchQ)}" />
+    <div class="chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${tags.map(t => `<button class="chip" data-tag="${t}">#${t}</button>`).join("")}</div>
+    ${users.slice(0, 8).map(u => `<button class="listbtn" data-profile="${u.id}"><img src="${u.avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b><div class="sub">${esc(u.bio || u.city || "")}</div></div></button>`).join("")}
+    <div class="grid3" style="margin-top:10px">${posts.slice(0, 12).map(p => `<button class="cell" data-open="${p.id}">${p.media?.[0] ? (p.kind === "video" ? `<video src="${p.media[0]}" muted></video>` : `<img src="${p.media[0]}" />`) : `<div class="textpost" style="height:100%"><p style="font-size:12px">${esc(p.caption.slice(0, 30))}</p></div>`}</button>`).join("")}</div>
   </div></section>`);
-  $("#q").oninput = (e) => { searchQ = e.target.value; render(); };
+  $("#back").onclick = () => { tab = "updates"; render(); };
+  $("#q").oninput = (e) => { searchQ = e.target.value; render(); $("#q").focus(); };
+  app.querySelectorAll("[data-tag]").forEach(b => b.onclick = () => { searchQ = b.dataset.tag; render(); });
   app.querySelectorAll("[data-profile]").forEach(b => b.onclick = () => { profileId = b.dataset.profile; tab = "updates"; render(); });
+  app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { viewer = b.dataset.open; tab = "updates"; render(); });
 }
 
 function notes() {
   const me = api.me();
+  const reqs = api.db().requests.filter(r => r.to === me.id);
   mutate(db => db.notes.forEach(n => { if (n.user === me.id) n.read = true; }));
   shell(`<section class="screen on"><div class="scroll page"><button id="back" class="sub">← Updates</button><div class="h1">Notifications</div>
-    ${api.db().notes.filter(n => n.user === me.id).map(n => `<div class="listbtn"><img src="${api.user(n.actor)?.avatar || ""}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(n.actor)?.username}</b> ${esc(n.body)}<div class="sub">${ago(n.created)}</div></div></div>`).join("") || `<div class="empty">You’re caught up.</div>`}
+    ${reqs.map(r => `<div class="listbtn"><img src="${api.user(r.from).avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(r.from).username}</b> requested to follow<div class="row"><button class="btn small" data-acc="${r.from}">Accept</button><button class="btn ghost small" data-dec="${r.from}">Decline</button></div></div></div>`).join("")}
+    ${api.db().notes.filter(n => n.user === me.id).map(n => `<button class="listbtn" data-note="${n.id}"><img src="${api.user(n.actor)?.avatar || ""}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(n.actor)?.username || "someone"}</b> ${esc(n.body)}<div class="sub">${ago(n.created)}</div></div></button>`).join("") || `<div class="empty">You’re caught up.</div>`}
   </div></section>`);
   $("#back").onclick = () => { tab = "updates"; render(); };
+  app.querySelectorAll("[data-acc]").forEach(b => b.onclick = () => { mutate(db => { const from = b.dataset.acc; const meU = db.users.find(u => u.id === me.id); const them = db.users.find(u => u.id === from); if (!meU.followers.includes(from)) meU.followers.push(from); if (!them.following.includes(me.id)) them.following.push(me.id); db.requests = db.requests.filter(r => !(r.from === from && r.to === me.id)); }); render(); });
+  app.querySelectorAll("[data-dec]").forEach(b => b.onclick = () => { mutate(db => { db.requests = db.requests.filter(r => !(r.from === b.dataset.dec && r.to === me.id)); }); render(); });
+  app.querySelectorAll("[data-note]").forEach(b => b.onclick = () => { const n = api.db().notes.find(x => x.id === b.dataset.note); if (n?.post) { viewer = n.post; tab = "updates"; render(); } else if (n?.actor) { profileId = n.actor; tab = "updates"; render(); } });
 }
 
 function settings() {
   const me = api.me();
+  const blocked = api.db().blocks.filter(b => b.by === me.id);
   shell(`<section class="screen on"><div class="scroll page"><div class="h1">Settings</div>
-    <button class="listbtn" id="edit">Account · Edit profile</button>
-    <button class="listbtn" id="priv">Privacy · ${me.private ? "Private" : "Public"}</button>
-    <button class="listbtn" id="blocked">Blocked users</button>
-    <button class="listbtn" id="notifs">Notifications</button>
-    <button class="listbtn" id="sec">Security</button>
-    <button class="listbtn" id="help">Help</button>
-    <button class="listbtn" id="about">About Old Time</button>
-    <button class="listbtn" id="searchtab">Search</button>
+    <button class="listbtn" id="edit">Account · @${me.username}</button>
+    <button class="listbtn" id="pass">Password</button>
+    <button class="listbtn" id="priv">Privacy · ${me.private ? "Private" : "Public"} account</button>
+    <button class="listbtn" id="blocked">Blocked · ${blocked.length}</button>
+    <button class="listbtn" id="notifs">Notifications · on</button>
+    <button class="listbtn" id="help">Help · report a problem</button>
+    <button class="listbtn" id="about">About · terms and privacy</button>
+    <button class="listbtn" id="reset">Reset sample data</button>
     <button class="btn ghost" id="out" style="margin-top:16px">Log out</button>
+    <div id="extra"></div>
   </div></section>`);
   $("#out").onclick = () => { api.logout(); render(); };
-  $("#searchtab").onclick = () => { tab = "search"; render(); };
-  $("#priv").onclick = () => { mutate(db => { api.me().private = !api.me().private; }); toast(api.me().private ? "Private" : "Public"); render(); };
-  $("#edit").onclick = () => { const bio = prompt("Bio", me.bio); const name = prompt("Name", me.name); if (bio != null) mutate(() => { me.bio = bio; me.name = name || me.name; }); render(); };
-  $("#blocked").onclick = () => toast(api.db().blocks.filter(b => b.by === me.id).map(b => b.who).join(", ") || "None blocked");
-  $("#notifs").onclick = () => toast("Likes, comments, follows: on");
-  $("#sec").onclick = () => toast("Password last changed today");
-  $("#help").onclick = () => toast("help@oldtime.app");
-  $("#about").onclick = () => toast("Old Time · watch, follow, find nearby");
+  $("#edit").onclick = editProfile;
+  $("#priv").onclick = () => { mutate(() => { api.me().private = !api.me().private; }); render(); };
+  $("#pass").onclick = () => { $("#extra").innerHTML = `<input class="field" id="np" type="password" placeholder="New password" /><button class="btn" id="sp" style="margin-top:8px">Save password</button>`; $("#sp").onclick = () => { if ($("#np").value.length < 6) return toast("6+ characters"); mutate(() => { api.me().password = $("#np").value; }); toast("Password updated"); }; };
+  $("#blocked").onclick = () => { $("#extra").innerHTML = blocked.map(b => `<div class="listbtn"><span>@${api.user(b.who)?.username}</span><button data-un="${b.who}">Unblock</button></div>`).join("") || `<div class="sub">No blocked users.</div>`; $("#extra").querySelectorAll("[data-un]").forEach(b => b.onclick = () => { mutate(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === b.dataset.un)); }); render(); }); };
+  $("#notifs").onclick = () => toast("Likes, comments, follows, and messages stay on");
+  $("#help").onclick = () => { mutate(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason: "help", at: Date.now() })); toast("Sent to help"); };
+  $("#about").onclick = () => { $("#extra").innerHTML = `<p class="sub" style="margin-top:8px">Old Time is a social feed, chat, and map. Posts you make stay on this device until a server is connected. Be decent.</p>`; };
+  $("#reset").onclick = () => { api.reset(); api.login("you@oldtime.app", "oldtime"); render(); };
 }
 
 render();
