@@ -175,3 +175,13 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .centerprof { text-align: center; padding: 28px 16px; }
 .centerprof img.big { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; margin: 0 auto 10px; }
 .msgdock { position: absolute; left: 12px; right: 12px; bottom: 84px; background: #f2f2f4; border-radius: 22px; padding: 12px 14px; color: #888; text-align: left; }
+
+.datesep { text-align: center; color: #8e8e93; font-size: 12px; margin: 10px 0; }
+.quote { border-left: 3px solid #111; padding-left: 6px; font-size: 12px; opacity: .75; margin-bottom: 4px; }
+.meta-line { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; opacity: .7; margin-top: 4px; }
+.reacts { font-size: 12px; margin-top: 4px; }
+.pollopt { background: rgba(0,0,0,.06); border-radius: 8px; padding: 6px 8px; margin-top: 4px; }
+.pinbar, .replybar { background: #f2f2f4; margin: 0 12px 6px; border-radius: 10px; padding: 8px 10px; font-size: 13px; text-align: left; }
+.composer { position: absolute; left: 8px; right: 8px; bottom: 78px; background: #f2f2f4; border-radius: 22px; padding: 6px 8px; display: flex; gap: 6px; align-items: center; z-index: 7; }
+.composer input { flex: 1; border: 0; background: transparent; outline: none; color: #111; }
+.bubble-msg { display: block; text-align: left; }
