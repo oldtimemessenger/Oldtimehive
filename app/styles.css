@@ -82,8 +82,7 @@ a { color: var(--gold); }
 .fab {
   width: 52px; height: 52px; border-radius: 50%; margin-top: -10px;
   background: #2a2d33; color: #fff; display: grid; place-items: center;
-  color: #1a140c; display: grid; place-items: center; font-size: 28px; font-weight: 500;
-  box-shadow: 0 8px 20px rgba(201,150,74,.35);
+  box-shadow: none;
 }
 
 .page { padding: 0 0 84px; }
