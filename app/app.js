@@ -17,6 +17,7 @@ let searchQ = "";
 let carouselIndex = {};
 let muted = true;
 let viewer = null;
+let profileMore = false;
 
 const ic = {
   heart: '<svg viewBox="0 0 24 24" class="navic"><path d="M12 19s-7-4.4-7-9.1A3.9 3.9 0 0 1 12 7a3.9 3.9 0 0 1 7 2.9C19 14.6 12 19 12 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
@@ -25,10 +26,23 @@ const ic = {
   share: '<svg viewBox="0 0 24 24" class="navic"><path d="M7.5 14.5c.2-3.6 2.8-5.8 6.3-5.8H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.2 5.4 17.6 8.7 13.2 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 };
 
-const esc = (s = "") => String(s).replace(/[&<>]/g, c => ({ "&": "&", "<": "<", ">": ">" }[c]));
+const esc = (s = "") => String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;").replace(/"/g, "&" + "quot;");
 const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n || 0);
 const ago = (t) => { const s = Math.max(1, (Date.now() - (t || Date.now())) / 1000); if (s < 60) return "now"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; };
 
+function copyText(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch { copied = false; }
+  ta.remove();
+  return copied;
+}
 function toast(msg) {
   const t = $(".toast"); if (!t) return;
   t.textContent = msg; t.style.display = "block";
@@ -143,12 +157,21 @@ function updates() {
     <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing in this feed yet.</div>`}</div>
     <button class="hooktop" id="hook">+ Create</button>
     <button class="hooktop" id="golive" style="top:58px">Live</button>
-    <div class="topbar" style="position:absolute;left:0;right:90px;background:transparent">
+    <div class="topbar" style="position:absolute;left:0;right:12px;background:transparent">
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
-      <button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button>
+      <span class="row">
+        <button class="icon" id="findposts" aria-label="Search">⌕</button>
+        <button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button>
+      </span>
     </div>
+    <div class="stories" style="position:absolute;top:58px;left:0;right:0;z-index:4">${[me.id, ...byAuthor.keys()].filter((id, i, arr) => arr.indexOf(id) === i).map(id => {
+      const u = api.user(id);
+      return `<button class="story" data-story="${id}"><div class="ring ${byAuthor.has(id) ? "" : "seen"}"><img src="${u.avatar}" alt="" /></div>${esc(u.username)}</button>`;
+    }).join("")}</div>
   </section>`);
   $("#bell").onclick = () => { tab = "notes"; render(); };
+  $("#findposts").onclick = () => { tab = "search"; render(); };
+  app.querySelectorAll("[data-story]").forEach(b => b.onclick = () => openStory(b.dataset.story));
   $("#hook").onclick = () => { createKind = "video"; openCreate(); };
   $("#golive").onclick = () => openLive({ shell, toast, app, $: (q) => $(q), render });
   app.querySelectorAll("[data-feed]").forEach(b => b.onclick = () => { feedMode = b.dataset.feed; render(); });
@@ -250,15 +273,15 @@ function follow(id) {
       db.notes.unshift({ id: "n" + Date.now(), user: id, kind: "follow", actor: me.id, body: "started following you", created: Date.now(), read: false });
     }
   });
-  toast(u.private && !api.me().following.includes(id) ? "Requested" : "Updated");
   render();
+  toast(u.private && !api.me().following.includes(id) ? "Requested" : "Updated");
 }
 function share(id) {
   const link = "https://oldtime.app/p/" + id;
-  navigator.clipboard?.writeText(link);
+  const copied = copyText(link);
   mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; if (p.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
-  toast("Link copied");
   render();
+  toast(copied ? "Link copied" : "Share counted");
 }
 function watch(id) { mutate(db => { const p = db.posts.find(x => x.id === id); if (p) { p.watch = Math.min(1, (p.watch || 0) + 0.08); p.views = (p.views || 0) + 1; } }); }
 
@@ -349,7 +372,7 @@ function openCreate() {
       if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : (pending[0] ? "photo" : "text"), media: pending[0]?.url || "", text: caption, created: Date.now(), color: "#1b140c" });
       else db.posts.unshift({ id: "p" + Date.now(), author: api.me().id, kind: createKind, caption: caption || " ", tags, media: pending.map(p => p.url), sound: "Original audio", location: $("#loc").value || api.me().city, visibility: $("#vis").value, trim, likes: [], comments: [], saves: [], created: Date.now(), views: 0, shares: 0, color: "linear-gradient(160deg,#1b140c,#3a2a18)" });
     });
-    pending = []; sheet.classList.remove("on"); toast("Posted"); tab = "updates"; profileId = null; render();
+    pending = []; sheet.classList.remove("on"); tab = "updates"; profileId = null; render(); toast("Posted");
   };
   sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
@@ -373,16 +396,17 @@ function profile(id) {
       <div><b style="font-size:28px">${esc(u.name)}</b><div class="sub">@${u.username}</div>
       <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div></div>
     </div>
-    <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
+    <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button><button class="followwide" id="logout">Log out</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
     ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Posts</b><button class="sub" id="more">More</button></div>
-      <div class="hooks">${grid.slice(0, 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
+      <div class="hooks">${grid.slice(0, profileMore ? grid.length : 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
       <div class="row" style="justify-content:space-between;margin-top:14px"><b>Recent</b></div>
       ${posts.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("")}`}
   </div></section>`);
   $("#back").onclick = () => { profileId = null; render(); };
-  $("#sharep") && ($("#sharep").onclick = () => toast("Profile link copied"));
+  $("#sharep") && ($("#sharep").onclick = () => toast(copyText("https://oldtime.app/u/" + u.username) ? "Profile link copied" : "Couldn't copy the link"));
   $("#playall") && ($("#playall").onclick = () => { const first = posts[0]; if (first) { viewer = first.id; render(); } });
-  $("#more") && ($("#more").onclick = () => toast("All posts"));
+  $("#more") && ($("#more").onclick = () => { profileMore = !profileMore; render(); });
+  $("#logout") && ($("#logout").onclick = () => { api.logout(); tab = "updates"; chatId = null; profileId = null; viewer = null; render(); });
   $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo([u.id]); render(); });
   app.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { profileMode = b.dataset.m; render(); });
   $("#pfollow") && ($("#pfollow").onclick = () => follow(u.id));
@@ -485,19 +509,19 @@ function settings() {
     <button class="listbtn" id="pass">Password</button>
     <button class="listbtn" id="priv">Privacy · ${me.private ? "Private" : "Public"} account</button>
     <button class="listbtn" id="blocked">Blocked · ${blocked.length}</button>
-    <button class="listbtn" id="notifs">Notifications · on</button>
+    <button class="listbtn" id="notifs">Notifications · ${me.notifs === false ? "off" : "on"}</button>
     <button class="listbtn" id="help">Help · report a problem</button>
     <button class="listbtn" id="about">About · terms and privacy</button>
     <button class="listbtn" id="reset">Reset sample data</button>
     <button class="btn ghost" id="out" style="margin-top:16px">Log out</button>
     <div id="extra"></div>
   </div></section>`);
-  $("#out").onclick = () => { api.logout(); render(); };
+  $("#out").onclick = () => { api.logout(); tab = "updates"; chatId = null; profileId = null; viewer = null; render(); };
   $("#edit").onclick = editProfile;
   $("#priv").onclick = () => { mutate(() => { api.me().private = !api.me().private; }); render(); };
   $("#pass").onclick = () => { $("#extra").innerHTML = `<input class="field" id="np" type="password" placeholder="New password" /><button class="btn" id="sp" style="margin-top:8px">Save password</button>`; $("#sp").onclick = () => { if ($("#np").value.length < 6) return toast("6+ characters"); mutate(() => { api.me().password = $("#np").value; }); toast("Password updated"); }; };
   $("#blocked").onclick = () => { $("#extra").innerHTML = blocked.map(b => `<div class="listbtn"><span>@${api.user(b.who)?.username}</span><button data-un="${b.who}">Unblock</button></div>`).join("") || `<div class="sub">No blocked users.</div>`; $("#extra").querySelectorAll("[data-un]").forEach(b => b.onclick = () => { mutate(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === b.dataset.un)); }); render(); }); };
-  $("#notifs").onclick = () => toast("Likes, comments, follows, and messages stay on");
+  $("#notifs").onclick = () => { mutate(db => { const u = db.users.find(x => x.id === me.id); u.notifs = u.notifs === false; }); render(); };
   $("#help").onclick = () => { mutate(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason: "help", at: Date.now() })); toast("Sent to help"); };
   $("#about").onclick = () => { $("#extra").innerHTML = `<p class="sub" style="margin-top:8px">Old Time is a social feed, chat, and map. Posts you make stay on this device until a server is connected. Be decent.</p>`; };
   $("#reset").onclick = () => { api.reset(); api.login("you@oldtime.app", "oldtime"); render(); };
