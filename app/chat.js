@@ -16,7 +16,7 @@ export function ensureConvo(ids) {
 }
 
 function blankConvo(members, title) {
-  return { id: "cv" + Date.now(), members, title: title || "", messages: [], draft: "", pinnedIds: [], disappear: "off", mutedUntil: 0, wallpaper: "", locked: false, group: members.length > 2 ? groupMeta(title || "Group", members[0]) : null };
+  return { id: "cv" + Date.now(), members, title: title || "", messages: [], draft: "", pinnedIds: [], disappear: "after view", mutedUntil: 0, wallpaper: "", locked: false, group: members.length > 2 ? groupMeta(title || "Group", members[0]) : null };
 }
 function groupMeta(name, admin) {
   return { name, description: "", admins: [admin], permissions: { send: "everyone", info: "admins", add: "admins", pin: "admins", calls: "everyone", polls: "everyone", all: "admins" }, invite: "join-" + Date.now(), approval: false, requests: [], tags: {}, history: "off" };
@@ -29,7 +29,10 @@ function ready(id) {
     if (!c) return;
     c.draft = c.draft || "";
     c.pinnedIds = c.pinnedIds || [];
-    c.disappear = c.disappear || "off";
+    c.disappear = c.disappear || "after view";
+    db.kept = db.kept || [];
+    const now = Date.now();
+    c.messages = c.messages.filter(m => !(m.expiresAt && m.expiresAt <= now));
     c.mutedUntil = c.mutedUntil || 0;
     c.wallpaper = c.wallpaper || "";
     if (c.members.length > 2 && !c.group) c.group = groupMeta(c.title || "Group", c.members[0]);
@@ -70,6 +73,12 @@ function tick(m, me) {
   if (m.status === "delivered") return " ✓✓";
   return " ✓";
 }
+function ttl(mode) {
+  if (mode === "10 seconds") return 10e3;
+  if (mode === "24 hours") return 864e5;
+  if (mode === "after view") return 8e3;
+  return 0;
+}
 function pushMsg(id, msg) {
   msg.id = msg.id || "m" + Date.now();
   msg.created = Date.now();
@@ -77,6 +86,10 @@ function pushMsg(id, msg) {
   msg.status = "sending";
   msg.reactions = msg.reactions || {};
   msg.editHistory = msg.editHistory || [];
+  msg.kept = false;
+  const mode = convo(id)?.disappear || "after view";
+  if (mode !== "off" && mode !== "after view") msg.expiresAt = Date.now() + ttl(mode);
+  if (msg.kind && msg.kind !== "text") { msg.fileSize = msg.fileSize || ""; msg.body = msg.body || msg.kind; }
   mutate(db => {
     const c = db.convos.find(x => x.id === id);
     c.messages.push(msg);
@@ -129,7 +142,7 @@ export function openThread(id, ctx) {
   const c = convo(id);
   const me = api.me();
   const other = api.user(c.members.find(x => x !== me.id)) || me;
-  mutate(db => db.convos.find(x => x.id === id).messages.forEach(m => { if (m.author !== me.id) { m.read = true; if (db.settings.readReceipts !== false) m.status = "read"; } }));
+  mutate(db => db.convos.find(x => x.id === id).messages.forEach(m => { if (m.author !== me.id && !m.kept) { m.read = true; if (db.settings.readReceipts !== false) m.status = "read"; if ((db.convos.find(x => x.id === id).disappear === "after view") && !m.expiresAt) m.expiresAt = Date.now() + 8000; } }));
   const pin = c.messages.find(m => (c.pinnedIds || []).includes(m.id));
   const presence = c.group ? c.members.length + " participants" : (other.online ? "online" : "last seen " + ctx.ago(other.lastSeen || Date.now() - 36e5));
   ctx.shell(`<section class="screen on" style="background:${c.wallpaper || "#fff"};color:#111">
@@ -226,7 +239,7 @@ function onMessage(ctx, cid, id) {
     ctx.toast("Opened once"); ctx.render(); return;
   }
   const mine = m.author === api.me().id;
-  const actions = ["Reply", "React", "Forward", "Copy", "Star", "Pin", "Delete"];
+  const actions = ["Reply", "React", "Forward", "Copy", "Keep", "Star", "Pin", "Delete"];
   if (mine && m.kind === "text") actions.splice(5, 0, "Edit");
   if (mine) actions.push("Delete for everyone");
   menu(ctx, actions, (label) => {
@@ -234,6 +247,7 @@ function onMessage(ctx, cid, id) {
     if (label === "React") return menu(ctx, REACTS, (e) => { react(cid, id, e); ctx.render(); });
     if (label === "Forward") return forward(ctx, cid, id);
     if (label === "Copy") { navigator.clipboard?.writeText(m.body || preview(m)); ctx.toast("Copied"); }
+    if (label === "Keep") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.kept = true; delete msg.expiresAt; db.kept = db.kept || []; db.kept.push({ id, chat: cid, body: (msg.body || "").slice(0, 280), kind: msg.kind, at: Date.now() }); });
     if (label === "Star") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.starred = !msg.starred; db.saved = db.saved || []; if (msg.starred) db.saved.push(id); });
     if (label === "Pin") mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.pinnedIds = cv.pinnedIds.includes(id) ? cv.pinnedIds.filter(x => x !== id) : [id, ...cv.pinnedIds].slice(0, 3); });
     if (label === "Edit") { const next = prompt("Edit message", m.body); if (next) mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.editHistory.push(msg.body); msg.body = next; msg.edited = true; }); }
@@ -380,9 +394,10 @@ function mute(ctx, id) {
   });
 }
 function disappear(ctx, id) {
-  menu(ctx, ["Off", "24 hours", "7 days", "90 days"], (label) => {
-    mutate(db => { db.convos.find(x => x.id === id).disappear = label === "Off" ? "off" : label; });
-    ctx.toast("Disappearing " + label);
+  menu(ctx, ["After viewing", "10 seconds", "24 hours", "Off"], (label) => {
+    const mode = label === "After viewing" ? "after view" : label === "Off" ? "off" : label;
+    mutate(db => { db.convos.find(x => x.id === id).disappear = mode; });
+    ctx.toast(mode === "off" ? "Messages stay until you delete them" : "Disappears " + label.toLowerCase());
     ctx.render();
   });
 }
