@@ -18,6 +18,19 @@ let carouselIndex = {};
 let muted = true;
 let viewer = null;
 
+const ic = {
+  play: '<svg viewBox="0 0 24 24" class="navic"><rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 8.5v7l6-3.5z" fill="currentColor"/></svg>',
+  search: '<svg viewBox="0 0 24 24" class="navic"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  create: '<svg viewBox="0 0 24 24" class="navic"><path d="M9 16V8l8 2.2V14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="16" r="1.6" fill="currentColor"/><path d="M16.2 7.2l.4-1.2.4 1.2 1.2.4-1.2.4-.4 1.2-.4-1.2-1.2-.4z" fill="currentColor"/></svg>',
+  bars: '<svg viewBox="0 0 24 24" class="navic"><path d="M7 14v4M12 8v10M17 11v7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" class="navic"><path d="M12 19s-7-4.2-7-9a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 4.8-7 9-7 9z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
+  comment: '<svg viewBox="0 0 24 24" class="navic"><path d="M6 16.5 4 19V7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v6A2.5 2.5 0 0 1 17.5 16H6z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>',
+  share: '<svg viewBox="0 0 24 24" class="navic"><path d="M8 12l8-5v10L8 12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 8.5c2.5.4 4 2 4 4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  more: '<svg viewBox="0 0 24 24" class="navic"><circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18" cy="12" r="1.3" fill="currentColor"/></svg>',
+  addlist: '<svg viewBox="0 0 24 24" class="navic"><path d="M5 7h10M5 12h10M5 17h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 14v6M14 17h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  remix: '<svg viewBox="0 0 24 24" class="navic"><path d="M7 8a5 5 0 0 1 8.5-2L17 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 4v3h-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M17 16a5 5 0 0 1-8.5 2L7 17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7 20v-3h3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
+};
+
 const esc = (s = "") => String(s).replace(/[&<>]/g, c => ({ "&": "&", "<": "<", ">": ">" }[c]));
 const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n || 0);
 const ago = (t) => { const s = Math.max(1, (Date.now() - (t || Date.now())) / 1000); if (s < 60) return "now"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; };
@@ -32,11 +45,11 @@ function shell(inner, mode) {
   app.innerHTML = `<div class="stage"><div class="phone ${light ? "light" : ""}">
     ${inner}
     <nav class="nav ${light ? "lightnav" : ""}">
-      <button data-tab="updates">${light ? "☺" : "▶"}<span>${light ? "People" : "Updates"}</span></button>
-      <button data-tab="map">${light ? "☎" : "⌖"}<span>${light ? "Calls" : "Map"}</span></button>
-      <button id="create-open"><span class="fab">${light ? "+" : "♪"}</span></button>
-      <button data-tab="chat">✎<span>Chat</span></button>
-      <button data-tab="settings"><span class="orb"></span><span>${light ? "Settings" : "You"}</span></button>
+      <button data-tab="updates" aria-label="Updates">${ic.play}</button>
+      <button data-tab="map" aria-label="Map">${ic.search}</button>
+      <button id="create-open" aria-label="Create"><span class="fab">${ic.create}</span></button>
+      <button data-tab="chat" aria-label="Chat">${ic.bars}</button>
+      <button data-tab="settings" aria-label="You"><span class="orb"></span></button>
     </nav>
     <div class="toast"></div>
     <div class="sheet" id="sheet"></div>
@@ -167,9 +180,10 @@ function postCard(p) {
       : `<img class="fullimg" src="${p.media[carouselIndex[p.id] || 0]}" alt="" data-dbl="${p.id}" />`;
   return `<article class="clip" data-id="${p.id}">${media}<div class="shade"></div>
     <div class="rail">
-      <button class="act ${liked ? "on" : ""}" data-like="${p.id}"><span class="bubble">♡</span>${fmt(p.likes.length)}</button>
-      <button class="act" data-comment="${p.id}"><span class="bubble">💬</span>${fmt(p.comments.length)}</button>
-      <button class="act" data-share="${p.id}"><span class="bubble">↗</span></button>
+      <button class="act ${liked ? "on" : ""}" data-like="${p.id}">${ic.heart}${fmt(p.likes.length)}</button>
+      <button class="act" data-comment="${p.id}">${ic.comment}${fmt(p.comments.length)}</button>
+      <button class="act" data-share="${p.id}">${ic.share}</button>
+      <button class="act" data-more="${p.id}">${ic.more}</button>
     </div>
     <div class="meta" style="bottom:158px">
       <div class="handle"><span class="orb"></span> <button data-profile="${u.id}">${esc(u.name)}</button> ${following ? "" : `<button class="followpill" data-follow="${u.id}">Follow</button>`}</div>
@@ -178,8 +192,8 @@ function postCard(p) {
     <div class="soundbar">
       <img src="${u.avatar}" alt="" />
       <div><b>${esc(p.sound || "Original audio")}</b><div class="sub">▶ ${fmt(p.views || 0)}</div></div>
-      <button class="remix" data-save="${p.id}">＋</button>
-      <button class="remix" data-share="${p.id}">Share</button>
+      <button class="remix" data-save="${p.id}" aria-label="Save">${ic.addlist}</button>
+      <button class="remix" data-share="${p.id}" aria-label="Remix">${ic.remix}</button>
     </div>
   </article>`;
 }
