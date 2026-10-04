@@ -1,4 +1,5 @@
 import { api, mutate, fileToData } from "./store.js";
+import { renderChat, chatState } from "./chat.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
@@ -67,7 +68,7 @@ function render() {
   if (openPost) return postView(openPost);
   if (tab === "home") return home();
   if (tab === "search") return search();
-  if (tab === "chat") return chatId ? thread(chatId) : chats();
+  if (tab === "chat") return renderChat({ shell, rerender: render, goProfile: (id) => { profileId = id; tab = "profile"; render(); } });
   if (tab === "profile") return profile(profileId || api.me().id);
   if (tab === "inbox") return inbox();
   home();
@@ -386,7 +387,7 @@ function openDm(id) {
   let c = api.db().convos.find(x => x.members.length === 2 && x.members.includes(me.id) && x.members.includes(id));
   if (!c) mutate(db => db.convos.push({ id: "cv" + Date.now(), members: [me.id, id], messages: [] }));
   c = api.db().convos.find(x => x.members.length === 2 && x.members.includes(me.id) && x.members.includes(id));
-  chatId = c.id; tab = "chat"; openPost = null; render();
+  chatState.id = c.id; chatState.screen = "thread"; tab = "chat"; openPost = null; render();
 }
 
 function editProfile() {
