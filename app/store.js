@@ -80,8 +80,7 @@ export const api = {
   },
   login(email, password) {
     const u = db.users.find(x => x.email === email || x.username === email);
-    if (!u || (password && u.password && u.password !== password)) throw new Error("Email or password is wrong");
-    if (!u) throw new Error("No account for that email");
+    if (!u || !password || u.password !== password) throw new Error("Email or password is wrong");
     db.session = u.id; persist();
   },
   oauth(provider) {
