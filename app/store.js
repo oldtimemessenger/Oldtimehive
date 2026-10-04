@@ -70,18 +70,20 @@ export const api = {
   reset: () => { db = seed(); persist(); },
   signup(form) {
     const username = (form.username || "").toLowerCase();
+    const email = (form.email || "").trim().toLowerCase();
     if (db.users.some(u => u.username === username)) throw new Error("Username taken");
     if (!/^[a-z0-9_]{3,24}$/.test(username)) throw new Error("Username must be 3–24 lowercase letters, numbers, or _");
-    if (!form.email || !form.email.includes("@")) throw new Error("Enter a real email");
+    if (!email || !email.includes("@")) throw new Error("Enter a real email");
+    if (db.users.some(u => (u.email || "").toLowerCase() === email)) throw new Error("Email already in use");
     if (!form.password || form.password.length < 6) throw new Error("Password needs 6+ characters");
     const id = "u" + Date.now();
-    db.users.push({ id, username, name: form.name || username, bio: form.bio || "", avatar: form.avatar || av("photo-1534528741775-53994a69daeb"), city: form.city || "Miami", verified: false, private: false, followers: [], following: [], email: form.email, password: form.password, birthday: form.birthday });
+    db.users.push({ id, username, name: form.name || username, bio: form.bio || "", avatar: form.avatar || av("photo-1534528741775-53994a69daeb"), city: form.city || "Miami", verified: false, private: false, followers: [], following: [], email, password: form.password, birthday: form.birthday });
     db.session = id; persist();
   },
   login(email, password) {
-    const u = db.users.find(x => x.email === email || x.username === email);
-    if (!u || (password && u.password && u.password !== password)) throw new Error("Email or password is wrong");
-    if (!u) throw new Error("No account for that email");
+    const identity = (email || "").trim().toLowerCase();
+    const u = db.users.find(x => (x.email || "").toLowerCase() === identity || x.username === identity);
+    if (!u || !password || u.password !== password) throw new Error("Email or password is wrong");
     db.session = u.id; persist();
   },
   oauth(provider) {
