@@ -132,7 +132,7 @@ function updates() {
   const unread = api.db().notes.filter(n => n.user === me.id && !n.read).length;
   shell(`<section class="screen on">
     <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing in this feed yet.</div>`}</div>
-    <button class="hooktop" id="hook">+ Hook</button>
+    <button class="hooktop" id="hook">+ Create</button>
     <div class="topbar" style="position:absolute;left:0;right:90px;background:transparent">
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
       <button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button>
@@ -175,7 +175,7 @@ function postCard(p) {
       <img src="${u.avatar}" alt="" />
       <div><b>${esc(p.sound || "Original audio")}</b><div class="sub">▶ ${fmt(p.views || 0)}</div></div>
       <button class="remix" data-save="${p.id}">＋</button>
-      <button class="remix" data-share="${p.id}">Remix</button>
+      <button class="remix" data-share="${p.id}">Share</button>
     </div>
   </article>`;
 }
@@ -363,15 +363,15 @@ function profile(id) {
       <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div></div>
     </div>
     <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
-    ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Hooks</b><button class="sub" id="more">More</button></div>
-      <div class="hooks">${grid.slice(0, 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "hook").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
+    ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Posts</b><button class="sub" id="more">More</button></div>
+      <div class="hooks">${grid.slice(0, 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
       <div class="row" style="justify-content:space-between;margin-top:14px"><b>Recent</b></div>
       ${posts.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("")}`}
   </div></section>`);
   $("#back").onclick = () => { profileId = null; render(); };
   $("#sharep") && ($("#sharep").onclick = () => toast("Profile link copied"));
   $("#playall") && ($("#playall").onclick = () => { const first = posts[0]; if (first) { viewer = first.id; render(); } });
-  $("#more") && ($("#more").onclick = () => toast("Showing hooks"));
+  $("#more") && ($("#more").onclick = () => toast("All posts"));
   $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo([u.id]); render(); });
   app.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { profileMode = b.dataset.m; render(); });
   $("#pfollow") && ($("#pfollow").onclick = () => follow(u.id));
