@@ -156,12 +156,14 @@ function postCard(p) {
   const liked = p.likes.includes(me.id);
   const saved = p.saves.includes(me.id);
   const following = me.following.includes(u.id) || u.id === me.id;
+  const imageIndex = carouselIndex[p.id] || 0;
   const media = p.kind === "video"
     ? `<video src="${p.media[0]}" data-id="${p.id}" loop playsinline ${muted ? "muted" : ""}></video>`
     : p.kind === "text"
       ? `<div class="textpost" style="height:100%;background:${p.color}"><p>${esc(p.caption)}</p></div>`
-      : `<img class="fullimg" src="${p.media[carouselIndex[p.id] || 0]}" alt="" data-dbl="${p.id}" />`;
+      : `<img class="fullimg" src="${p.media[imageIndex] || p.media[0]}" alt="" data-dbl="${p.id}" />`;
   return `<article class="clip" data-id="${p.id}">${media}<div class="shade"></div>
+    ${p.kind === "carousel" && p.media.length > 1 ? `<div class="dots carouseldots">${p.media.map((_, i) => `<button type="button" class="${i === imageIndex ? "on" : ""}" data-dot="${p.id}:${i}" aria-label="Show image ${i + 1}"></button>`).join("")}</div>` : ""}
     <div class="rail">
       <button class="act ${liked ? "on" : ""}" data-like="${p.id}"><span class="bubble">♡</span>${fmt(p.likes.length)}</button>
       <button class="act" data-comment="${p.id}"><span class="bubble">💬</span>${fmt(p.comments.length)}</button>
@@ -348,9 +350,9 @@ function profile(id) {
   const me = api.me();
   if (!u) { profileId = null; return updates(); }
   const locked = u.private && u.id !== me.id && !u.followers.includes(me.id);
-  const posts = api.db().posts.filter(p => p.author === u.id);
+  const posts = api.posts().filter(p => p.author === u.id);
   const videos = posts.filter(p => p.kind === "video");
-  const saved = api.db().posts.filter(p => p.saves.includes(u.id));
+  const saved = api.posts().filter(p => p.saves.includes(u.id));
   const mine = u.id === me.id;
   const grid = locked ? [] : (profileMode === "videos" ? videos : profileMode === "saved" && mine ? saved : posts);
   const requested = api.db().requests.some(r => r.from === me.id && r.to === u.id);
@@ -362,9 +364,11 @@ function profile(id) {
       <div><b style="font-size:28px">${esc(u.name)}</b><div class="sub">@${u.username}</div>
       <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div></div>
     </div>
-    <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
+    <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button><button class="btn ghost small" id="pmsg">Message</button>`}<button class="playround" id="playall">▶</button></div>
+    ${mine ? "" : `<div class="row" style="margin-bottom:12px"><button class="sub" id="pblock">Block</button><button class="sub" id="prep">Report</button></div>`}
+    ${locked ? "" : `<div class="seg">${["posts", "videos", ...(mine ? ["saved"] : [])].map(mode => `<button type="button" class="${profileMode === mode ? "on" : ""}" data-m="${mode}">${mode[0].toUpperCase() + mode.slice(1)}</button>`).join("")}</div>`}
     ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Posts</b><button class="sub" id="more">More</button></div>
-      <div class="hooks">${grid.slice(0, 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
+      <div class="hooks">${grid.slice(0, 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
       <div class="row" style="justify-content:space-between;margin-top:14px"><b>Recent</b></div>
       ${posts.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("")}`}
   </div></section>`);
@@ -402,8 +406,8 @@ function editProfile() {
   sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
 function postViewer(id) {
-  const p = api.db().posts.find(x => x.id === id);
-  if (!p) { viewer = null; return profile(profileId); }
+  const p = api.posts().find(x => x.id === id);
+  if (!p) { viewer = null; return profile(profileId || api.me().id); }
   shell(`<section class="screen on"><div class="topbar"><button id="back">←</button><b>@${api.user(p.author).username}</b><span></span></div><div class="feed">${postCard(p)}</div></section>`);
   $("#back").onclick = () => { viewer = null; render(); };
   bindPosts();

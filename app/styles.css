@@ -144,6 +144,9 @@ textarea.field { min-height: 90px; resize: none; }
 .dots { display: flex; gap: 5px; justify-content: center; margin-top: 8px; }
 .dots i { width: 6px; height: 6px; border-radius: 50%; background: #3a3e49; display: block; }
 .dots i.on { background: var(--gold); }
+.dots button { width: 8px; height: 8px; border-radius: 50%; background: #3a3e49; }
+.dots button.on { background: var(--gold); }
+.carouseldots { position: absolute; left: 0; right: 0; bottom: 236px; z-index: 3; }
 .textpost { min-height: 280px; display: grid; place-items: center; padding: 28px; text-align: left; }
 .textpost p { font-family: var(--serif); font-size: 28px; line-height: 1.2; }
 .skel { height: 12px; border-radius: 8px; background: linear-gradient(90deg, #171a22, #222633, #171a22); background-size: 200% 100%; animation: sh 1.2s infinite; }

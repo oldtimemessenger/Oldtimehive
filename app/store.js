@@ -103,11 +103,18 @@ export const api = {
     const author = this.user(authorId);
     if (!author) return false;
     if (me && this.blocked(me.id, author.id)) return false;
-    if (author.private && me && author.id !== me.id && !author.followers.includes(me.id)) return false;
+    if (author.private && (!me || (author.id !== me.id && !author.followers.includes(me.id)))) return false;
     return true;
   },
+  canSeePost(post) {
+    if (!post || !this.canSee(post.author)) return false;
+    if (post.visibility !== "followers") return true;
+    const me = this.me();
+    const author = this.user(post.author);
+    return !!me && !!author && (author.id === me.id || author.followers.includes(me.id));
+  },
   posts() {
-    return db.posts.filter(p => this.canSee(p.author));
+    return db.posts.filter(p => this.canSeePost(p));
   },
   ranked(mode) {
     const me = this.me();
