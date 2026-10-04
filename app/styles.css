@@ -76,11 +76,12 @@ a { color: var(--gold); }
   display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; padding: 0 6px 12px;
   background: linear-gradient(180deg, transparent, rgba(7,8,12,.94) 36%);
 }
-.nav button { color: #a39c93; font-size: 10px; font-weight: 700; display: grid; justify-items: center; gap: 3px; }
-.nav button.on { color: var(--text); }
+.nav button { color: #f4f4f5; font-size: 10px; font-weight: 700; display: grid; justify-items: center; gap: 3px; }
+.nav button.on { color: #fff; }
+.navic { width: 26px; height: 26px; display: block; }
 .fab {
-  width: 52px; height: 52px; border-radius: 18px; margin-top: -18px;
-  background: linear-gradient(160deg, #f3e2bc, var(--gold) 40%, var(--gold-2));
+  width: 52px; height: 52px; border-radius: 50%; margin-top: -10px;
+  background: #2a2d33; color: #fff; display: grid; place-items: center;
   color: #1a140c; display: grid; place-items: center; font-size: 28px; font-weight: 500;
   box-shadow: 0 8px 20px rgba(201,150,74,.35);
 }
@@ -190,3 +191,7 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .ft-say input { flex: 1; background: rgba(255,255,255,.16); border: 0; border-radius: 999px; padding: 10px 12px; color: #fff; outline: none; }
 .ft-controls { position: absolute; left: 0; right: 0; bottom: 78px; display: flex; justify-content: center; gap: 8px; z-index: 4; }
 .ft-controls button { background: rgba(255,255,255,.16); color: #fff; border-radius: 999px; padding: 8px 10px; font-size: 12px; font-weight: 700; }
+
+.act { color: #fff; }
+.act .navic { width: 30px; height: 30px; }
+.remix .navic { width: 18px; height: 18px; }
