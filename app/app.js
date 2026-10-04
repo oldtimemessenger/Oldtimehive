@@ -1,5 +1,6 @@
 import { api, mutate, fileToData } from "./store.js";
 import { ensureConvo as makeConvo, openChatList, openThread } from "./chat.js";
+import { openLive } from "./live.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
@@ -134,6 +135,7 @@ function updates() {
   shell(`<section class="screen on">
     <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing in this feed yet.</div>`}</div>
     <button class="hooktop" id="hook">+ Create</button>
+    <button class="hooktop" id="golive" style="top:58px">Live</button>
     <div class="topbar" style="position:absolute;left:0;right:90px;background:transparent">
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
       <button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button>
@@ -141,6 +143,7 @@ function updates() {
   </section>`);
   $("#bell").onclick = () => { tab = "notes"; render(); };
   $("#hook").onclick = () => { createKind = "video"; openCreate(); };
+  $("#golive").onclick = () => openLive({ shell, toast, app, $: (q) => $(q), render });
   app.querySelectorAll("[data-feed]").forEach(b => b.onclick = () => { feedMode = b.dataset.feed; render(); });
   bindPosts();
   const vids = [...app.querySelectorAll("video")];
