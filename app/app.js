@@ -1,4 +1,5 @@
 import { api, mutate, fileToData } from "./store.js";
+import { ensureConvo as makeConvo, openChatList, openThread } from "./chat.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
@@ -408,75 +409,12 @@ function postViewer(id) {
   $("#back").onclick = () => { viewer = null; render(); };
   bindPosts();
 }
-function ensureConvo(ids) {
-  const me = api.me();
-  const members = [me.id, ...ids.filter(id => id !== me.id)];
-  let c = api.db().convos.find(x => x.members.length === members.length && members.every(id => x.members.includes(id)));
-  if (!c) { c = { id: "cv" + Date.now(), members, messages: [] }; mutate(db => db.convos.unshift(c)); }
-  return c.id;
-}
-
+function ensureConvo(ids) { return makeConvo(ids); }
 function chats() {
-  const me = api.me();
-  const rows = api.db().convos.filter(c => c.members.includes(me.id) && !c.members.some(id => api.db().blocks.some(b => b.by === me.id && b.who === id)));
-  shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
-    <div class="row" style="justify-content:space-between"><button class="icon">Edit</button><div class="row"><img src="${me.avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>Chats</b></div><div class="row"><button class="icon" id="newgroup">＋</button><button class="icon" id="newchat">✎</button></div></div>
-    <input class="chatsearch" id="cq" placeholder="Search" />
-    ${rows.map(c => {
-      const others = c.members.filter(id => id !== me.id).map(api.user).filter(Boolean);
-      const last = c.messages[c.messages.length - 1];
-      const unread = c.messages.filter(m => m.author !== me.id && !m.read).length;
-      return `<button class="listbtn" data-cv="${c.id}"><img src="${others[0]?.avatar || ""}" style="width:52px;height:52px;border-radius:50%;object-fit:cover" /><div style="flex:1"><b>${esc(c.title || others.map(o => o.name).join(", "))}</b><div class="sub">${last ? esc(last.body).slice(0, 42) : "New chat"}</div></div><div style="text-align:right"><div class="sub">${last ? ago(last.created) : ""}</div>${unread ? `<span class="unread">${unread}</span>` : ""}</div></button>`;
-    }).join("")}
-  </div></section>`, "light");
-  app.querySelectorAll("[data-cv]").forEach(b => b.onclick = () => { chatId = b.dataset.cv; render(); });
-  $("#newchat").onclick = () => pickPeople(false);
-  $("#newgroup").onclick = () => pickPeople(true);
-}
-function pickPeople(group) {
-  const sheet = $("#sheet");
-  const picked = new Set();
-  sheet.classList.add("on");
-  const draw = () => {
-    sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>${group ? "New group" : "New message"}</b>
-      ${group ? `<input class="field" id="gtitle" placeholder="Group name" style="margin:8px 0" />` : ""}
-      ${api.db().users.filter(u => u.id !== api.me().id).map(u => `<button class="listbtn" data-pick="${u.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b>${picked.has(u.id) ? " · added" : ""}</div></button>`).join("")}
-      <button class="btn" id="start">Start</button></div>`;
-    sheet.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { if (group) picked.has(b.dataset.pick) ? picked.delete(b.dataset.pick) : picked.add(b.dataset.pick); else picked.clear() || picked.add(b.dataset.pick); draw(); });
-    $("#start").onclick = () => {
-      if (!picked.size) return toast("Pick someone");
-      const id = ensureConvo([...picked]);
-      if (group && $("#gtitle")?.value) mutate(db => { db.convos.find(c => c.id === id).title = $("#gtitle").value.trim(); });
-      sheet.classList.remove("on"); chatId = id; render();
-    };
-  };
-  draw();
-  sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
+  openChatList({ shell, toast, esc, ago, app, $: (q) => $(q), render, setChat: (id) => { chatId = id; render(); } });
 }
 function thread(id) {
-  const c = api.db().convos.find(x => x.id === id);
-  const me = api.me();
-  const other = api.user(c.members.find(id => id !== me.id)) || me;
-  mutate(db => db.convos.find(x => x.id === id).messages.forEach(m => { if (m.author !== me.id) m.read = true; }));
-  shell(`<section class="screen on" style="background:#fff;color:#111"><div class="topbar"><button id="back">←</button><img src="${other.avatar}" style="width:34px;height:34px;border-radius:50%;object-fit:cover" /><div><b>${esc(other.name)}</b> ${other.verified ? "✓" : ""}<div class="sub">@${other.username}</div></div><button class="icon">🏷</button></div>
-    <div class="centerprof">
-      <img class="big" src="${other.avatar}" alt="" />
-      <b style="font-size:22px">${esc(other.name)}</b>
-      <div class="sub">@${other.username}</div>
-      <div class="sub">${fmt(other.followers.length)} followers · ${api.db().posts.filter(p => p.author === other.id).length} posts</div>
-      <button class="btn ghost small" id="viewp" style="margin-top:10px">View profile</button>
-      <div id="msgs" style="text-align:left;margin-top:16px">${c.messages.map(m => `<div class="bubble-msg ${m.author === me.id ? "mine" : "theirs"}">${esc(m.body || "")}</div>`).join("")}</div>
-    </div>
-    <form id="send" class="msgdock"><input id="msg" placeholder="Message..." style="width:100%;background:transparent;border:0;outline:none" /></form>
-  </section>`, "light");
-  $("#back").onclick = () => { chatId = null; render(); };
-  $("#viewp").onclick = () => { profileId = other.id; tab = "updates"; chatId = null; render(); };
-  $("#send").onsubmit = (e) => { e.preventDefault(); send($("#msg").value.trim(), null); };
-  function send(body) {
-    if (!body) return;
-    mutate(db => db.convos.find(x => x.id === id).messages.push({ id: "m" + Date.now(), author: me.id, body, created: Date.now(), read: false }));
-    render();
-  }
+  openThread(id, { shell, toast, esc, ago, app, $: (q) => $(q), render, setChat: (id) => { chatId = id; render(); } });
 }
 
 function map() {
