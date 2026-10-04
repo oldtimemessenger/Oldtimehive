@@ -76,13 +76,14 @@ a { color: var(--gold); }
   display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; padding: 0 6px 12px;
   background: linear-gradient(180deg, transparent, rgba(7,8,12,.94) 36%);
 }
-.nav button { color: #f4f4f5; font-size: 10px; font-weight: 700; display: grid; justify-items: center; gap: 3px; }
-.nav button.on { color: #fff; }
-.navic { width: 26px; height: 26px; display: block; }
+.nav button { color: #a39c93; font-size: 10px; font-weight: 700; display: grid; justify-items: center; gap: 3px; }
+.nav button.on { color: var(--text); }
+.navic { width: 30px; height: 30px; display: block; }
 .fab {
-  width: 52px; height: 52px; border-radius: 50%; margin-top: -10px;
-  background: #2a2d33; color: #fff; display: grid; place-items: center;
-  box-shadow: none;
+  width: 52px; height: 52px; border-radius: 18px; margin-top: -18px;
+  background: linear-gradient(160deg, #f3e2bc, var(--gold) 40%, var(--gold-2));
+  color: #1a140c; display: grid; place-items: center; font-size: 28px; font-weight: 500;
+  box-shadow: 0 8px 20px rgba(201,150,74,.35);
 }
 
 .page { padding: 0 0 84px; }
