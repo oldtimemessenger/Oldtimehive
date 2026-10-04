@@ -74,7 +74,8 @@ a { color: inherit; text-decoration: none; }
 .act { color: #fff; display: grid; justify-items: center; gap: 2px; font-size: 12px; font-weight: 650; }
 .act svg { width: 28px; height: 28px; stroke: #fff; fill: none; stroke-width: 1.7; }
 .act.on svg { fill: #fff; stroke: #fff; }
-.meta { position: absolute; left: 14px; bottom: 148px; z-index: 2; display: flex; gap: 8px; align-items: center; }
+.meta { position: absolute; left: 14px; right: 72px; bottom: 108px; z-index: 2; display: flex; gap: 8px; align-items: center; }
+.capline { position: absolute; left: 14px; right: 72px; bottom: 84px; z-index: 2; font-size: 14px; line-height: 1.35; }
 .handle { font-weight: 700; display: flex; gap: 8px; align-items: center; font-size: 15px; }
 .avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; }
 .followpill { border: 1px solid #fff; color: #fff; border-radius: 8px; padding: 4px 10px; font-size: 13px; font-weight: 700; background: transparent; }
