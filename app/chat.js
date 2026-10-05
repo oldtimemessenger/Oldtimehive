@@ -5,6 +5,8 @@ import { openEmojiPicker } from "./emoji.js";
 
 const REACTS = ["❤️", "😂", "😮", "😢", "🙏", "👍", "👎"];
 let ui = { reply: null, screen: "thread", q: "", call: null, filter: "all" };
+let expiryTimer = null;
+export function closeChatTimers() { clearTimeout(expiryTimer); }
 
 export function ensureConvo(ids) {
   const me = api.me();
@@ -106,7 +108,12 @@ function pushMsg(id, msg) {
   });
   setTimeout(() => mutate(db => {
     const m = db.convos.find(x => x.id === id)?.messages.find(x => x.id === msg.id);
-    if (m && m.status === "sending") m.status = "sent";
+    if (m && m.status === "sending") {
+      m.status = "sent";
+      const bubble = [...document.querySelectorAll("[data-msg]")].find(el => el.dataset.msg === m.id);
+      const status = bubble?.querySelector(".meta-line > span:last-child");
+      if (status) status.textContent = clock(m.created) + tick(m, api.me());
+    }
   }), 400);
 }
 
@@ -134,8 +141,9 @@ export function openChatList(ctx) {
   bindRows(ctx);
 }
 function row(c, me) {
-  const last = c.messages[c.messages.length - 1];
-  const unread = c.messages.filter(m => m.author !== me.id && m.status !== "read" && !m.read).length;
+  const visible = c.messages.filter(m => !m.hiddenFor?.includes(me.id));
+  const last = visible.at(-1);
+  const unread = visible.filter(m => m.author !== me.id && m.status !== "read" && !m.read).length;
   const text = c.draft ? "Draft: " + c.draft : preview(last);
   const others = c.members.filter(id => id !== me.id).map(api.user).filter(Boolean);
   return `<button class="listbtn" data-cv="${c.id}"><img src="${others[0]?.avatar || me.avatar}" style="width:52px;height:52px;border-radius:50%;object-fit:cover" /><div style="flex:1"><b>${ctxEsc(nameOf(c, me))}</b><div class="sub">${ctxEsc(text).slice(0, 48)}</div></div><div style="text-align:right"><div class="sub">${last ? clock(last.created) : ""}</div>${unread ? `<span class="unread">${unread}</span>` : ""}${c.mutedUntil > Date.now() ? `<div class="sub">Muted</div>` : ""}</div></button>`;
@@ -163,14 +171,14 @@ export function openThread(id, ctx) {
     <div class="topbar">
       <button id="back">←</button>
       <img src="${other.avatar}" style="width:34px;height:34px;border-radius:50%;object-fit:cover" />
-      <button id="info" style="text-align:left;flex:1"><b>${ctxEsc(c.group ? nameOf(c, me) : other.name)}</b> ${other.verified && !c.group ? "✓" : ""}<div class="sub">${c.group ? presence : "@" + ctxEsc(other.username) + " · " + presence}</div></button>
+      <button id="info" style="text-align:left;flex:1"><b>${ctxEsc(c.group ? nameOf(c, me) : other.name)}</b> ${other.verified && !c.group ? `<span class="verified" aria-label="Verified">${ic.check}</span>` : ""}<div class="sub">${c.group ? presence : "@" + ctxEsc(other.username) + " · " + presence}</div></button>
       <button id="vcall" class="icon" aria-label="Voice call">${ic.phone}</button>
       <button id="vid" class="icon" aria-label="Video call">${ic.video}</button>
       <button id="find" class="icon" aria-label="Search chat">${ic.search}</button>
       <button id="more" class="icon" aria-label="More chat options">${ic.more}</button>
     </div>
     ${pin ? `<button class="pinbar" id="pinjump">Pinned · ${ctxEsc(preview(pin))}</button>` : ""}
-    <div class="scroll" id="msgs" style="padding:8px 12px 150px">${messages(c, me)}</div>
+    <div class="scroll" id="msgs" data-convo="${id}" style="padding:8px 12px 150px">${messages(c, me)}</div>
     ${ui.reply ? `<div class="replybar">Reply · ${ctxEsc(preview(c.messages.find(m => m.id === ui.reply) || {}))}<button id="clearrep" aria-label="Cancel reply">${ic.close}</button></div>` : ""}
     <form id="send" class="composer"><button type="button" id="emoji" aria-label="Add emoji">${ic.smile}</button><button type="button" id="attach" aria-label="Attach">${ic.plus}</button><input id="msg" aria-label="Message" placeholder="Message" value="${ctxEsc(c.draft || "")}" /><button type="button" id="mic" aria-label="Record voice note">${ic.mic}</button><button type="submit" aria-label="Send message">${ic.send}</button></form>
   </section>`, "light");
@@ -204,10 +212,12 @@ export function openThread(id, ctx) {
   ctx.app.querySelectorAll("[data-vote]").forEach(b => b.onclick = (e) => { e.stopPropagation(); const [mid, i] = b.dataset.vote.split(":"); vote(id, mid, +i); ctx.render(); });
   ctx.app.querySelectorAll("[data-retry]").forEach(b => b.onclick = (e) => { e.stopPropagation(); mutate(db => { db.convos.find(x => x.id === id).messages.find(x => x.id === b.dataset.retry).status = "sent"; }); ctx.render(); });
   const box = ctx.$("#msgs"); if (box) box.scrollTop = box.scrollHeight;
+  const nextExpiry = Math.min(...c.messages.filter(m => m.expiresAt).map(m => m.expiresAt));
+  if (Number.isFinite(nextExpiry)) expiryTimer = setTimeout(() => { if (ctx.$("#msgs")?.dataset.convo === id) ctx.render(); }, Math.max(1, nextExpiry - Date.now() + 20));
 }
 function messages(c, me) {
   let last = "", unread = false;
-  return c.messages.map(m => {
+  return c.messages.filter(m => !m.hiddenFor?.includes(me.id)).map(m => {
     const bits = [];
     const d = day(m.created);
     if (d !== last) { last = d; bits.push(`<div class="datesep">${d}</div>`); }
@@ -279,7 +289,8 @@ function onMessage(ctx, cid, id) {
     if (label === "Star") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.starred = !msg.starred; db.saved = db.saved || []; if (msg.starred) db.saved.push(id); });
     if (label === "Pin") mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.pinnedIds = cv.pinnedIds.includes(id) ? cv.pinnedIds.filter(x => x !== id) : [id, ...cv.pinnedIds].slice(0, 3); });
     if (label === "Edit") { const next = prompt("Edit message", m.body); if (next) mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.editHistory.push(msg.body); msg.body = next; msg.edited = true; }); }
-    if (label === "Delete" || label === "Delete for everyone") mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.messages = cv.messages.filter(x => x.id !== id); });
+    if (label === "Delete") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.hiddenFor = [...new Set([...(msg.hiddenFor || []), api.me().id])]; });
+    if (label === "Delete for everyone" && mine) mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.messages = cv.messages.filter(x => x.id !== id); });
     ctx.render();
   });
 }
@@ -309,7 +320,7 @@ function forward(ctx, cid, id) {
     const to = targets[Number(name.split(".")[0]) - 1];
     const src = convo(cid).messages.find(m => m.id === id);
     const copy = structuredClone(src);
-    ["id", "replyTo", "expiresAt", "starred", "viewed", "expired"].forEach(key => delete copy[key]);
+    ["id", "replyTo", "expiresAt", "starred", "viewed", "expired", "hiddenFor"].forEach(key => delete copy[key]);
     pushMsg(to.id, { ...copy, forwarded: true, author: api.me().id, reactions: {}, editHistory: [], status: "sending" });
     ctx.toast("Forwarded");
   });
@@ -398,7 +409,7 @@ function info(ctx, id) {
 function search(ctx, id) {
   const c = convo(id);
   const q = (ui.q || "").toLowerCase();
-  const hits = c.messages.filter(m => !q || preview(m).toLowerCase().includes(q) || (m.body || "").toLowerCase().includes(q));
+  const hits = c.messages.filter(m => !m.hiddenFor?.includes(api.me().id) && (!q || preview(m).toLowerCase().includes(q) || (m.body || "").toLowerCase().includes(q)));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Search</b><span></span></div>
     <input class="chatsearch" id="sq" placeholder="Search this chat" value="${ctxEsc(ui.q)}" />
@@ -410,7 +421,7 @@ function search(ctx, id) {
 }
 function media(ctx, id) {
   const c = convo(id);
-  const items = c.messages.filter(m => !m.viewOnce && !m.expired && ["photo", "video", "file", "voice", "gif"].includes(m.kind));
+  const items = c.messages.filter(m => !m.hiddenFor?.includes(api.me().id) && !m.viewOnce && !m.expired && ["photo", "video", "file", "voice", "gif"].includes(m.kind));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Media</b><span></span></div>
     <div class="sub">Photos ${items.filter(m => m.kind === "photo").length} · Videos ${items.filter(m => m.kind === "video").length} · Files ${items.filter(m => m.kind === "file").length} · Voice ${items.filter(m => m.kind === "voice").length}</div>
@@ -436,7 +447,7 @@ function group(ctx, id) {
 }
 function saved(ctx) {
   const items = [];
-  api.db().convos.filter(c => c.members.includes(api.me().id) && !c.locked && !c.members.some(uid => api.blocked(api.me().id, uid))).forEach(c => c.messages.forEach(m => { if ((m.starred || m.kept) && !(m.expiresAt <= Date.now())) items.push([c, m]); }));
+  api.db().convos.filter(c => c.members.includes(api.me().id) && !c.locked && !c.members.some(uid => api.blocked(api.me().id, uid))).forEach(c => c.messages.forEach(m => { if (!m.hiddenFor?.includes(api.me().id) && (m.starred || m.kept) && !(m.expiresAt <= Date.now())) items.push([c, m]); }));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Saved</b><span></span></div>
     ${items.map(([c, m]) => `<button class="listbtn" data-cv="${c.id}">${ctxEsc(nameOf(c, api.me()))} · ${ctxEsc(preview(m))}</button>`).join("") || `<div class="empty">No saved messages.</div>`}

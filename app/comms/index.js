@@ -43,6 +43,15 @@ function draw() {
     return;
   }
   root.className = "ot-call";
+  const signature = JSON.stringify([call.id, call.phase, call.video, call.muted, call.speaker, call.cameraOn, name]);
+  if (root.dataset.signature === signature && root.querySelector(".ot-meta")) {
+    const lines = root.querySelector(".ot-meta").children;
+    lines[1].textContent = `${call.video ? "Video" : "Voice"} · ${call.phase} · ${duration()}`;
+    lines[2].textContent = call.detail || "";
+    attachStreams(root, call);
+    return;
+  }
+  root.dataset.signature = signature;
   root.innerHTML = `<div class="ot-card">
     <video id="ot-remote" autoplay playsinline></video>
     <video id="ot-local" autoplay playsinline muted></video>

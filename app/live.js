@@ -4,6 +4,7 @@ import { icons as ic } from "./icons.js";
 let room = null;
 let stream = null;
 let facing = "user";
+let cameraVersion = 0;
 
 function esc(s = "") {
   return String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;");
@@ -77,8 +78,8 @@ function draw(ctx, host) {
   ctx.$("#ftback").onclick = () => leave(ctx, host);
   ctx.$("#ftend").onclick = () => leave(ctx, host);
   ctx.$("#ftmute").onclick = () => { room.muted = !room.muted; stream?.getAudioTracks().forEach(t => t.enabled = !room.muted); draw(ctx, host); };
-  ctx.$("#ftcam").onclick = async () => { room.camera = !room.camera; if (room.camera) await camera(true); else stop(); draw(ctx, host); };
-  ctx.$("#ftflip").onclick = async () => { facing = facing === "user" ? "environment" : "user"; if (room.camera) await camera(true); draw(ctx, host); };
+  ctx.$("#ftcam").onclick = async () => { room.camera = !room.camera; if (room.camera) await camera(true); else stop(); if (room) draw(ctx, host); };
+  ctx.$("#ftflip").onclick = async () => { facing = facing === "user" ? "environment" : "user"; if (room.camera) await camera(true); if (room) draw(ctx, host); };
   ctx.$("#say").onsubmit = (e) => {
     e.preventDefault();
     const body = ctx.$("#line").value.trim();
@@ -91,10 +92,12 @@ function draw(ctx, host) {
 
 async function camera(on) {
   stop();
+  const version = cameraVersion;
   if (!on || !navigator.mediaDevices?.getUserMedia) { if (room) room.camera = false; return; }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
-    if (!room) { stop(); return; }
+    const next = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
+    if (!room || version !== cameraVersion) { next.getTracks().forEach(t => t.stop()); return; }
+    stream = next;
     stream.getAudioTracks().forEach(t => t.enabled = !room.muted);
   } catch {
     stream = null;
@@ -102,6 +105,7 @@ async function camera(on) {
   }
 }
 function stop() {
+  cameraVersion++;
   stream?.getTracks().forEach(t => t.stop());
   stream = null;
 }

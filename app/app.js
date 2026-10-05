@@ -1,5 +1,5 @@
-import { api, mutate, fileToData } from "./store.js";
-import { ensureConvo as makeConvo, openChatList, openThread } from "./chat.js";
+import { api, mutate, fileToData, notify } from "./store.js";
+import { ensureConvo as makeConvo, openChatList, openThread, closeChatTimers } from "./chat.js";
 import { openLive } from "./live.js";
 import { mountComms, closeVoiceNote } from "./comms/index.js";
 import { icons as ic, icon } from "./icons.js";
@@ -36,6 +36,7 @@ let viewer = null;
 let profileMore = false;
 
 let feedObserver = null;
+const watchedPosts = new Set();
 
 const esc = (s = "") => String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;").replace(/"/g, "&" + "quot;");
 const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n || 0);
@@ -62,6 +63,7 @@ function toast(msg) {
 function shell(inner, mode) {
   closeEmojiPicker();
   closeVoiceNote();
+  closeChatTimers();
   clearInterval(storyTimer);
   feedObserver?.disconnect();
   const light = mode === "light";
@@ -86,7 +88,7 @@ function shell(inner, mode) {
     render();
   });
   $("#create-open").onclick = () => { leaveLive(); openCreate(); };
-  app.querySelectorAll('button').forEach(button => {
+  app.querySelectorAll('#back, #ftback, #playall').forEach(button => {
     const symbols = { "←": ["back", "Back"], "✕": ["close", "Close"], "▶": ["play", "Play"] };
     const replacement = symbols[button.textContent.trim()];
     if (replacement) { button.innerHTML = icon(replacement[0]); button.setAttribute("aria-label", replacement[1]); }
@@ -159,8 +161,10 @@ function forgot() {
 }
 
 function updates() {
+  const previousFeed = $("#feed");
+  const activePost = previousFeed?.children[Math.round(previousFeed.scrollTop / (previousFeed.clientHeight || 1))]?.dataset.id;
   const me = api.me();
-  const stories = api.db().stories.filter(s => Date.now() - s.created < 864e5 && api.canSee(s.author));
+  const stories = api.db().stories.filter(s => Date.now() - s.created < 864e5 && api.canSeePost(s));
   const byAuthor = new Map();
   stories.forEach(s => { if (!byAuthor.has(s.author)) byAuthor.set(s.author, s); });
   const posts = api.ranked(feedMode);
@@ -186,12 +190,16 @@ function updates() {
   $("#golive").onclick = () => openLive({ shell, toast, app, $: (q) => $(q), render });
   app.querySelectorAll("[data-feed]").forEach(b => b.onclick = () => { feedMode = b.dataset.feed; render(); });
   bindPosts();
+  if (activePost) {
+    const active = [...$("#feed").children].find(el => el.dataset.id === activePost);
+    if (active) $("#feed").scrollTop = active.offsetTop;
+  }
 }
 function observeVideos() {
   const vids = [...app.querySelectorAll(".clip video")];
   feedObserver = new IntersectionObserver((ents) => ents.forEach(en => {
     const v = en.target;
-    if (en.isIntersecting) { v.muted = muted; v.play().catch(() => {}); if (!v.dataset.watched) { watch(v.dataset.id); v.dataset.watched = "true"; } }
+    if (en.isIntersecting) { v.muted = muted; v.play().catch(() => {}); if (!watchedPosts.has(v.dataset.id)) { watchedPosts.add(v.dataset.id); watch(v.dataset.id); } }
     else v.pause();
   }), { threshold: 0.65 });
   vids.forEach(v => {
@@ -219,8 +227,9 @@ function postCard(p) {
     </div>
     ${p.kind === "carousel" ? `<div class="carousel-nav">${p.media.map((_, i) => `<button data-dot="${p.id}:${i}" aria-label="Photo ${i + 1} of ${p.media.length}" aria-pressed="${i === (carouselIndex[p.id] || 0)}" class="${i === (carouselIndex[p.id] || 0) ? "on" : ""}"></button>`).join("")}</div>` : ""}
     <div class="meta" style="bottom:158px">
-      <div class="handle"><span class="orb"></span> <button data-profile="${u.id}">${esc(u.name)}</button> ${following ? "" : `<button class="followpill" data-follow="${u.id}">Follow</button>`}</div>
+      <div class="handle"><img src="${u.avatar}" alt="" class="avatar" /> <button data-profile="${u.id}">${esc(u.name)}</button>${u.verified ? `<span class="verified" aria-label="Verified">${ic.check}</span>` : ""} ${following ? "" : `<button class="followpill" data-follow="${u.id}">Follow</button>`}</div>
       <div class="cap">${esc(p.caption)}</div>
+      ${p.location ? `<div class="sub">${esc(p.location)}</div>` : ""}
     </div>
     <div class="soundbar">
       <img src="${u.avatar}" alt="" />
@@ -265,7 +274,7 @@ function like(id) {
     const p = db.posts.find(x => x.id === id);
     const i = p.likes.indexOf(me.id);
     if (i >= 0) p.likes.splice(i, 1);
-    else { p.likes.push(me.id); (p.tags || []).forEach(t => db.interests[t] = (db.interests[t] || 0) + 1); if (p.author !== me.id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "like", actor: me.id, post: id, body: "liked your post", created: Date.now(), read: false }); }
+    else { p.likes.push(me.id); (p.tags || []).forEach(t => db.interests[t] = (db.interests[t] || 0) + 1); if (p.author !== me.id) notify(db, { id: "n" + Date.now(), user: p.author, kind: "like", actor: me.id, post: id, body: "liked your post", created: Date.now(), read: false }); }
   });
   render();
 }
@@ -277,6 +286,7 @@ function save(id) {
 function follow(id) {
   const me = api.me();
   const u = api.user(id);
+  if (api.blocked(me.id, id)) return toast("Unblock this user before following");
   mutate(db => {
     const meU = db.users.find(x => x.id === me.id);
     const them = db.users.find(x => x.id === id);
@@ -285,10 +295,11 @@ function follow(id) {
       them.followers = them.followers.filter(x => x !== me.id);
       db.requests = db.requests.filter(r => !(r.from === me.id && r.to === id));
     } else if (them.private) {
-      if (!db.requests.some(r => r.from === me.id && r.to === id)) db.requests.push({ from: me.id, to: id, at: Date.now() });
+      if (db.requests.some(r => r.from === me.id && r.to === id)) db.requests = db.requests.filter(r => !(r.from === me.id && r.to === id));
+      else db.requests.push({ from: me.id, to: id, at: Date.now() });
     } else {
       meU.following.push(id); them.followers.push(me.id);
-      db.notes.unshift({ id: "n" + Date.now(), user: id, kind: "follow", actor: me.id, body: "started following you", created: Date.now(), read: false });
+      notify(db, { id: "n" + Date.now(), user: id, kind: "follow", actor: me.id, body: "started following you", created: Date.now(), read: false });
     }
   });
   render();
@@ -297,7 +308,7 @@ function follow(id) {
 function share(id) {
   const link = new URL(location.pathname, location.origin); link.searchParams.set("post", id);
   const copied = copyText(link.href);
-  mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; if (p.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
+  mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; if (p.author !== api.me().id) notify(db, { id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
   render();
   toast(copied ? "Link copied" : "Share counted");
 }
@@ -324,7 +335,7 @@ function comments(id) {
         const post = db.posts.find(x => x.id === id);
         if (parent) { const c = post.comments.find(x => x.id === parent); c.replies = c.replies || []; c.replies.push({ id: "r" + Date.now(), author: api.me().id, body, created: Date.now() }); }
         else post.comments.push({ id: "c" + Date.now(), author: api.me().id, body, likes: [], replies: [], created: Date.now() });
-        if (post.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: post.author, kind: parent ? "reply" : "comment", actor: api.me().id, post: id, body: (parent ? "replied: " : "commented: ") + body.slice(0, 80), created: Date.now(), read: false });
+        if (post.author !== api.me().id) notify(db, { id: "n" + Date.now(), user: post.author, kind: parent ? "reply" : "comment", actor: api.me().id, post: id, body: (parent ? "replied: " : "commented: ") + body.slice(0, 80), created: Date.now(), read: false });
       });
       draw();
     };
@@ -334,7 +345,7 @@ function comments(id) {
 }
 
 function openStory(authorId) {
-  const list = api.db().stories.filter(s => s.author === authorId && Date.now() - s.created < 864e5);
+  const list = api.db().stories.filter(s => s.author === authorId && Date.now() - s.created < 864e5 && api.canSeePost(s));
   if (!list.length) { createKind = "story"; openCreate(); return; }
   let i = 0;
   const view = $("#storyview");
@@ -376,20 +387,29 @@ function openCreate() {
   $("#pick").onclick = () => $("#file").click();
   $("#rec").onclick = () => $("#cam").click();
   const take = async (files) => {
+    const picked = $("#picked"), prev = $("#prev"), pimg = $("#pimg"), post = $("#post");
+    post.disabled = true;
     try {
       pending = [];
-      for (const f of files) pending.push(await fileToData(f));
+      for (const f of files) {
+        if (!/^(image|video)\//.test(f.type)) throw new Error("Choose photos or videos");
+        pending.push(await fileToData(f));
+      }
     } catch (e) { pending = []; toast(e.message || "Couldn't read media"); return; }
-    $("#picked").textContent = pending.length + " ready";
-    if (pending[0]?.video) { $("#prev").style.display = "block"; $("#prev").src = pending[0].url; $("#pimg").style.display = "none"; }
-    else if (pending[0]) { $("#pimg").style.display = "block"; $("#pimg").src = pending[0].url; $("#prev").style.display = "none"; }
+    finally { post.disabled = false; }
+    if (!picked.isConnected) return;
+    picked.textContent = pending.length + " ready";
+    prev.style.display = "none"; pimg.style.display = "none";
+    if (pending[0]?.video) { prev.style.display = "block"; prev.src = pending[0].url; }
+    else if (pending[0]) { pimg.style.display = "block"; pimg.src = pending[0].url; }
   };
   $("#file").onchange = () => take([...$("#file").files]);
   $("#cam").onchange = () => take([...$("#cam").files]);
   $("#post").onclick = async () => {
     const caption = $("#cap").value.trim();
     const tags = [...caption.matchAll(/#([a-z0-9_]+)/gi)].map(m => m[1].toLowerCase());
-    if (["text", "story"].includes(createKind) && !caption && !pending.length) return toast("Add text or media");
+    if (createKind === "text" && !caption) return toast("Add text");
+    if (createKind === "story" && !caption && !pending.length) return toast("Add text or media");
     if (["video", "photo", "carousel"].includes(createKind) && !pending.length) return toast("Add a photo or video");
     if (createKind === "video" && (pending.length !== 1 || !pending[0].video)) return toast("Choose one video");
     if (createKind === "photo" && (pending.length !== 1 || pending[0].video)) return toast("Choose one photo");
@@ -397,8 +417,8 @@ function openCreate() {
     if (createKind === "story" && pending.length > 1) return toast("Choose one story image or video");
     const trim = Number($("#trim").value) || 0;
     try { mutate(db => {
-      if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : (pending[0] ? "photo" : "text"), media: pending[0]?.url || "", text: caption, created: Date.now(), color: "#1b140c" });
-      else db.posts.unshift({ id: "p" + Date.now(), author: api.me().id, kind: createKind, caption: caption || " ", tags, media: pending.map(p => p.url), sound: "Original audio", location: $("#loc").value || api.me().city, visibility: $("#vis").value, trim, likes: [], comments: [], saves: [], created: Date.now(), views: 0, shares: 0, color: "linear-gradient(160deg,#1b140c,#3a2a18)" });
+      if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : (pending[0] ? "photo" : "text"), media: pending[0]?.url || "", text: caption, visibility: $("#vis").value, created: Date.now(), color: "#1b140c" });
+      else db.posts.unshift({ id: "p" + Date.now(), author: api.me().id, kind: createKind, caption: caption || " ", tags, media: createKind === "text" ? [] : pending.map(p => p.url), sound: "Original audio", location: $("#loc").value || api.me().city, visibility: $("#vis").value, trim, likes: [], comments: [], saves: [], created: Date.now(), views: 0, shares: 0, color: "linear-gradient(160deg,#1b140c,#3a2a18)" });
     }); } catch (e) { toast(e.message); return; }
     pending = []; sheet.classList.remove("on"); tab = "updates"; profileId = null; render(); toast("Posted");
   };
@@ -547,7 +567,7 @@ function settings() {
   $("#out").onclick = () => { api.logout(); tab = "updates"; chatId = null; profileId = null; viewer = null; render(); };
   $("#edit").onclick = editProfile;
   $("#priv").onclick = () => { mutate(() => { api.me().private = !api.me().private; }); render(); };
-  $("#pass").onclick = () => { $("#extra").innerHTML = `<input class="field" id="np" type="password" placeholder="New password" /><button class="btn" id="sp" style="margin-top:8px">Save password</button>`; $("#sp").onclick = () => { if ($("#np").value.length < 6) return toast("6+ characters"); mutate(() => { api.me().password = $("#np").value; }); toast("Password updated"); }; };
+  $("#pass").onclick = () => { $("#extra").innerHTML = `<input class="field" id="cp" type="password" autocomplete="current-password" placeholder="Current password" /><input class="field" id="np" type="password" autocomplete="new-password" placeholder="New password" /><button class="btn" id="sp" style="margin-top:8px">Save password</button>`; $("#sp").onclick = () => { if ($("#cp").value !== api.me().password) return toast("Current password is wrong"); if ($("#np").value.length < 6) return toast("6+ characters"); mutate(() => { api.me().password = $("#np").value; }); toast("Password updated"); }; };
   $("#blocked").onclick = () => { $("#extra").innerHTML = blocked.map(b => `<div class="listbtn"><span>@${api.user(b.who)?.username}</span><button data-un="${b.who}">Unblock</button></div>`).join("") || `<div class="sub">No blocked users.</div>`; $("#extra").querySelectorAll("[data-un]").forEach(b => b.onclick = () => { mutate(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === b.dataset.un)); }); render(); }); };
   $("#notifs").onclick = () => { mutate(db => { const u = db.users.find(x => x.id === me.id); u.notifs = u.notifs === false; }); render(); };
   $("#help").onclick = () => {
@@ -562,7 +582,16 @@ const params = new URLSearchParams(location.search);
 if (params.get("as")) sessionStorage.setItem("oldtime-as", params.get("as"));
 if (params.get("post")) viewer = params.get("post");
 if (params.get("user")) profileId = api.user(params.get("user"))?.id || null;
-window.addEventListener("oldtime-data", () => { if (!$("#sheet.on") && !$("#storyview.on") && !$(".emoji-overlay") && !$("#ftback")) render(); });
+window.addEventListener("oldtime-data", () => {
+  if ($("#sheet.on") || $("#storyview.on") || $(".emoji-overlay") || $("#ftback")) return;
+  const input = document.activeElement;
+  const position = input?.selectionStart;
+  const end = input?.selectionEnd;
+  render();
+  if (input?.id && $( `#${input.id}`) && typeof position === "number") {
+    const next = $(`#${input.id}`); next.focus(); next.setSelectionRange(position, end);
+  }
+});
 window.addEventListener("error", e => { if (e.error?.message) toast(e.error.message); });
 window.addEventListener("unhandledrejection", e => { if (e.reason?.message) toast(e.reason.message); });
 render();

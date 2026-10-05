@@ -257,3 +257,7 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .replybar { bottom: calc(132px + env(safe-area-inset-bottom)); }
 .seg { overflow-x: auto; flex-shrink: 0; }
 .emoji-categories, .emoji-grid { scrollbar-width: thin; scrollbar-color: #494d57 var(--panel); }
+.verified { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #3897f0; color: #fff; vertical-align: middle; }
+.verified .navic { width: 13px; height: 13px; stroke-width: 3; }
+.cap, .handle, .sub { overflow-wrap: anywhere; }
+#info { min-width: 0; overflow-wrap: anywhere; }

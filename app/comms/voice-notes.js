@@ -10,6 +10,7 @@ export function closeVoiceNote() {
   cancelRecording?.();
   players.forEach(p => p.audio.pause());
 }
+window.addEventListener("pagehide", closeVoiceNote);
 
 export function formatDur(sec) {
   const s = Math.max(0, Math.round(sec || 0));

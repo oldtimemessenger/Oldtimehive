@@ -60,7 +60,7 @@ function load() {
   } catch { return seed(); }
 }
 function persist() {
-  try { localStorage.setItem(KEY, JSON.stringify(db)); }
+  try { const value = JSON.stringify(db); if (localStorage.getItem(KEY) !== value) localStorage.setItem(KEY, value); }
   catch { throw new Error("Browser storage is full or unavailable. Remove large media or enable site storage, then try again."); }
 }
 export const api = {
@@ -138,6 +138,10 @@ export function mutate(fn) {
   const before = structuredClone(db);
   try { fn(db); persist(); }
   catch (error) { db = before; throw error; }
+}
+export function notify(db, note) {
+  if (db.users.find(u => u.id === note.user)?.notifs === false || api.blocked(note.user, note.actor)) return;
+  db.notes.unshift(note);
 }
 export function fileToData(file) {
   if (!file || file.size > 2 * 1024 * 1024) return Promise.reject(new Error("Local demo uploads are limited to 2 MB per file."));
