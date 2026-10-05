@@ -11,6 +11,7 @@ const V = [
 export function seed() {
   return {
     session: null,
+    settings: { readReceipts: true, lastSeen: "everyone" },
     users: [
       { id: "u1", username: "nova", name: "Nova Hale", bio: "Night drives and one-take clips.", avatar: av("photo-1524504388940-b1c1722653e1"), city: "Miami", verified: true, private: false, followers: ["me"], following: [], likes: 0, email: "nova@oldtime.app", password: "oldtime" },
       { id: "u2", username: "june", name: "June Park", bio: "Food, windows, late light.", avatar: av("photo-1544005313-94ddf0286df2"), city: "Los Angeles", verified: false, private: false, followers: [], following: ["me"], likes: 0, email: "june@oldtime.app", password: "oldtime" },
@@ -57,7 +58,7 @@ function load() {
     if (!raw || !raw.users) return seed();
     raw.requests = raw.requests || [];
     raw.resets = raw.resets || [];
-    raw.settings = raw.settings || { readReceipts: true, lastSeen: "everyone" };
+    raw.settings = { readReceipts: true, lastSeen: "everyone", ...raw.settings };
     if (raw.settings.readReceipts === undefined) raw.settings.readReceipts = true;
     if (!raw.settings.lastSeen) raw.settings.lastSeen = "everyone";
     return raw;
