@@ -441,23 +441,30 @@ function profile(id) {
   const mine = u.id === me.id;
   const grid = locked ? [] : (profileMode === "videos" ? videos : profileMode === "saved" && mine ? saved : posts);
   const requested = api.db().requests.some(r => r.from === me.id && r.to === u.id);
-  shell(`<section class="screen on"><div class="scroll page" style="padding-top:18px">
-    <div class="row" style="justify-content:space-between"><button id="back">←</button><div class="row">${mine ? `<button id="settings-open" class="icon" aria-label="Settings">${ic.settings}</button>` : ""}<button id="sharep" class="icon" aria-label="Share profile">${ic.share}</button></div></div>
-    <img class="hero-circle" src="${(posts.find(p => p.kind !== "video" && p.media?.[0]) || {}).media?.[0] || u.avatar}" alt="" />
-    <div class="row" style="align-items:flex-end;margin-top:-28px">
-      <img src="${u.avatar}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #111" />
-      <div><b style="font-size:28px">${esc(u.name)}</b><div class="sub">@${u.username}</div>
-      <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div></div>
-    </div>
-    <p class="cap">${esc(u.bio || "")}</p><p class="sub">${esc(u.city || "")}</p>
-    <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button><button class="followwide" id="logout">Log out</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
-    ${!mine ? `<div class="row profile-actions"><button class="btn ghost small" id="pmsg" ${api.blocked(me.id, u.id) ? "disabled" : ""}>Message</button><button class="btn ghost small" id="pblock">${api.db().blocks.some(b => b.by === me.id && b.who === u.id) ? "Unblock" : "Block"}</button><button class="btn ghost small" id="prep">Report</button></div>` : ""}
+  const cover = (posts.find(p => p.kind !== "video" && p.media?.[0]) || {}).media?.[0] || u.avatar;
+  shell(`<section class="screen on"><div class="scroll profile-page">
+    <div class="profile-ambient" aria-hidden="true"></div>
+    <header class="profile-hero">
+      <div class="profile-cover" aria-hidden="true"><img src="${esc(cover)}" alt="" /></div>
+      <div class="profile-top"><button id="back" class="icon profile-fab" aria-label="Back">←</button><div class="row">${mine ? `<button id="settings-open" class="icon profile-fab" aria-label="Settings">${ic.settings}</button>` : ""}<button id="sharep" class="icon profile-fab" aria-label="Share profile">${ic.share}</button></div></div>
+      <div class="profile-id">
+        <img class="profile-avatar" src="${esc(u.avatar)}" alt="" />
+        <b class="profile-name">${esc(u.name)}</b><div class="sub">@${u.username}</div>
+        <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div>
+        ${u.bio ? `<p class="cap">${esc(u.bio)}</p>` : ""}${u.city ? `<p class="sub">${esc(u.city)}</p>` : ""}
+      </div>
+      <div class="row" style="margin:14px 0 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button><button class="followwide" id="logout">Log out</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
+      ${!mine ? `<div class="row profile-actions"><button class="btn ghost small" id="pmsg" ${api.blocked(me.id, u.id) ? "disabled" : ""}>Message</button><button class="btn ghost small" id="pblock">${api.db().blocks.some(b => b.by === me.id && b.who === u.id) ? "Unblock" : "Block"}</button><button class="btn ghost small" id="prep">Report</button></div>` : ""}
+    </header>
+    <div class="profile-body">
     <div class="seg">${["posts", "videos", ...(mine ? ["saved"] : [])].map(mode => `<button data-m="${mode}" class="${profileMode === mode ? "on" : ""}">${mode[0].toUpperCase() + mode.slice(1)}</button>`).join("")}</div>
     ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Posts</b><button class="sub" id="more">More</button></div>
       <div class="hooks">${grid.slice(0, profileMore ? grid.length : 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
       <div class="row" style="justify-content:space-between;margin-top:14px"><b>Recent</b></div>
       ${grid.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${api.user(p.author).avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("") || `<div class="empty">No ${profileMode} yet.</div>`}`}
+    </div>
   </div></section>`);
+  app.querySelector(".profile-page").style.setProperty("--profile-cover", `url(${JSON.stringify(cover)})`);
   $("#back").onclick = () => { profileId = null; render(); };
   $("#settings-open") && ($("#settings-open").onclick = () => { profileId = null; tab = "settings"; render(); });
   $("#sharep") && ($("#sharep").onclick = () => { const link = new URL(location.pathname, location.origin); link.searchParams.set("user", u.username); toast(copyText(link.href) ? "Profile link copied" : "Couldn't copy the link"); });

@@ -261,3 +261,18 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .verified .navic { width: 13px; height: 13px; stroke-width: 3; }
 .cap, .handle, .sub { overflow-wrap: anywhere; }
 #info { min-width: 0; overflow-wrap: anywhere; }
+.profile-page { position: relative; overflow-x: hidden; padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+.profile-ambient { position: absolute; left: 0; right: 0; top: min(62vh, 440px); height: 720px; z-index: 0; overflow: hidden; pointer-events: none; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 25%, #000 45%, transparent); mask-image: linear-gradient(to bottom, transparent, #000 25%, #000 45%, transparent); }
+.profile-ambient::before { content: ""; position: absolute; inset: 0 -20%; background: var(--profile-cover) center / cover no-repeat; filter: blur(64px) saturate(1.3); opacity: .2; }
+.profile-hero { position: relative; z-index: 1; padding: 0 16px; }
+.profile-cover { position: relative; height: min(62vh, 440px); margin: 0 -16px; overflow: hidden; }
+.profile-cover img { width: 100%; height: 100%; object-fit: cover; }
+.profile-cover::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(7,8,12,.4) 0%, rgba(7,8,12,0) 20%, rgba(7,8,12,.18) 45%, rgba(7,8,12,.72) 75%, var(--bg) 100%); }
+.profile-top { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: max(16px, env(safe-area-inset-top)) 16px 8px; }
+.profile-fab { width: 38px; height: 38px; color: #fff; background: rgba(7,8,12,.42); border-color: rgba(255,255,255,.14); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 18px; }
+.profile-id { position: relative; z-index: 1; margin-top: -132px; text-shadow: 0 1px 12px rgba(0,0,0,.6); }
+.profile-avatar { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; border: 3px solid var(--bg); background: var(--card); margin-bottom: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.profile-name { display: block; font-size: 28px; line-height: 1.1; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.profile-id .sub { color: rgba(246,241,232,.74); margin-top: 3px; }
+.profile-id .cap { margin-top: 10px; }
+.profile-body { position: relative; z-index: 1; padding: 6px 16px 0; }
