@@ -73,17 +73,17 @@ a { color: var(--gold); }
 
 .nav {
   position: absolute; left: 0; right: 0; bottom: 0; height: 74px; z-index: 5;
-  display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; padding: 0 6px 12px;
+  display: grid; grid-template-columns: repeat(4, 1fr); align-items: end; padding: 0 6px 12px;
   background: linear-gradient(180deg, transparent, rgba(7,8,12,.94) 36%);
 }
 .nav button { color: #a39c93; font-size: 10px; font-weight: 700; display: grid; justify-items: center; gap: 3px; }
 .nav button.on { color: var(--text); }
 .navic { width: 30px; height: 30px; display: block; }
 .fab {
-  width: 52px; height: 52px; border-radius: 18px; margin-top: -18px;
-  background: linear-gradient(160deg, #f3e2bc, var(--gold) 40%, var(--gold-2));
+  width: 52px; height: 52px; border-radius: 50%; margin-top: -18px;
+  background: #fff;
   color: #1a140c; display: grid; place-items: center; font-size: 28px; font-weight: 500;
-  box-shadow: 0 8px 20px rgba(201,150,74,.35);
+  box-shadow: 0 8px 20px rgba(0,0,0,.35);
 }
 
 .page { padding: 0 0 84px; }
@@ -108,7 +108,7 @@ h1, .h1 { font-family: var(--serif); font-size: 32px; font-weight: 560; letter-s
 textarea.field { min-height: 90px; resize: none; }
 .btn {
   width: 100%; border-radius: 14px; padding: 13px; font-weight: 800;
-  background: linear-gradient(90deg, #f0ddb4, var(--gold)); color: #1b140c;
+  background: #fff; color: #1b140c;
 }
 .btn.ghost { background: #1c1f29; color: var(--text); border: 1px solid var(--line); }
 .btn.small { width: auto; padding: 8px 12px; border-radius: 999px; font-size: 13px; }
@@ -118,17 +118,6 @@ textarea.field { min-height: 90px; resize: none; }
 .toast {
   position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%);
   background: #222632; border: 1px solid var(--line); padding: 8px 12px; border-radius: 999px; z-index: 40; display: none; font-size: 13px;
-}
-.mapwrap { height: calc(100% - 74px); position: relative; background:
-  radial-gradient(circle at 30% 40%, #1c2836, transparent 40%),
-  radial-gradient(circle at 70% 60%, #243044, transparent 35%),
-  linear-gradient(160deg, #0e141c, #121820); overflow: hidden; }
-.pin {
-  position: absolute; transform: translate(-50%, -100%); text-align: center; color: #1b140c;
-}
-.pin i {
-  display: block; background: var(--gold); border-radius: 14px 14px 14px 4px; padding: 6px 8px; font-style: normal; font-weight: 800; font-size: 12px;
-  box-shadow: 0 8px 16px rgba(0,0,0,.35);
 }
 .bubble-msg { max-width: 78%; padding: 10px 12px; border-radius: 16px; margin: 6px 0; font-size: 14px; }
 .mine { margin-left: auto; background: #3a3122; }
