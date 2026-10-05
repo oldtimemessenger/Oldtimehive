@@ -1,1 +1,1 @@
-RESTORED
+import "./main.js";
