@@ -1,6 +1,6 @@
 # Old Time
 
-Mobile-first social app: vertical video, photos, carousels, text posts, stories, chat, and a location map.
+Mobile-first social app: vertical video, photos, carousels, text posts, stories, and chat.
 
 Open `index.html` in a browser, or serve the folder:
 
