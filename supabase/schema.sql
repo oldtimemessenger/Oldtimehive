@@ -51,3 +51,16 @@ create table notifications (
 );
 create table blocks (blocker uuid, blocked uuid, primary key (blocker, blocked));
 create table reports (id uuid primary key, reporter uuid, target text, reason text, created_at timestamptz default now());
+
+-- Signaling only. Call media is peer-to-peer and is not stored.
+create table call_signals (
+  id text primary key,
+  call_id text,
+  type text,
+  from_user uuid,
+  to_user uuid,
+  payload jsonb,
+  created_at timestamptz default now()
+);
+-- Voice notes live in the voice-notes storage bucket. messages.media holds the object path.
+-- messages.kind may be 'voice' or 'call'. Call rows are history text only.
