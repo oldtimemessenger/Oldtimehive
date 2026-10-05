@@ -57,6 +57,7 @@ function shell(inner, mode) {
       <button id="create-open" aria-label="Create"><span class="fab" aria-hidden="true">+</span></button>
       <button data-tab="chat" aria-label="Chat">${ic.comment}</button>
       <button data-tab="settings" aria-label="Profile"><span class="orb" aria-hidden="true"></span></button>
+      <button class="nav-search" data-tab="search" aria-label="Search"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M10 2a8 8 0 1 0 4.49 14.62l5.45 5.44 2.12-2.12-5.44-5.45A8 8 0 0 0 10 2Zm0 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" fill="currentColor" fill-rule="evenodd"/></svg></button>
     </nav>
     <div class="toast"></div>
     <div class="sheet" id="sheet"></div>
