@@ -1,6 +1,7 @@
 import { api, mutate, fileToData } from "./store.js";
 import { ensureConvo as makeConvo, openChatList, openThread } from "./chat.js";
 import { openLive } from "./live.js";
+import { mountComms } from "./comms/index.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
@@ -72,7 +73,10 @@ function shell(inner, mode) {
   $("#create-open").onclick = () => openCreate();
 }
 function render() {
+  const as = new URLSearchParams(location.search).get("as");
+  if (as) sessionStorage.setItem("oldtime-as", as);
   if (!api.me()) return auth();
+  mountComms({ toast, esc });
   if (viewer) return postViewer(viewer);
   if (tab === "updates" && profileId) return profile(profileId);
   if (tab === "updates") return updates();

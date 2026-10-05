@@ -37,7 +37,7 @@ function draw() {
   const name = peer?.name || "Contact";
   if (call.minimized) {
     root.className = "ot-call min";
-    root.innerHTML = `<button id="ot-restore">${name} \u00b7 ${call.phase} \u00b7 ${duration()}</button>`;
+    root.innerHTML = `<button id="ot-restore">${name} · ${call.phase} · ${duration()}</button>`;
     root.querySelector("#ot-restore").onclick = () => setMinimized(false);
     attachStreams(root, call);
     return;
@@ -46,7 +46,7 @@ function draw() {
   root.innerHTML = `<div class="ot-card">
     <video id="ot-remote" autoplay playsinline></video>
     <video id="ot-local" autoplay playsinline muted></video>
-    <div class="ot-meta"><b>${name}</b><div>${call.video ? "Video" : "Voice"} \u00b7 ${call.phase} \u00b7 ${duration()}</div><div>${call.detail || ""}</div></div>
+    <div class="ot-meta"><b>${name}</b><div>${call.video ? "Video" : "Voice"} · ${call.phase} · ${duration()}</div><div>${call.detail || ""}</div></div>
     <div class="ot-actions">
       ${call.phase === "incoming" ? `<button id="ot-yes">Accept</button><button id="ot-no">Decline</button>` : ""}
       ${call.phase !== "incoming" ? `<button id="ot-mute">${call.muted ? "Unmute" : "Mute"}</button>` : ""}

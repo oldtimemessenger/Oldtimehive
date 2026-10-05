@@ -195,3 +195,19 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .act { color: #fff; }
 .act .navic { width: 30px; height: 30px; }
 .remix .navic { width: 18px; height: 18px; }
+
+.vn-panel { text-align: center; }
+.vn-time { font-size: 28px; font-weight: 700; margin: 8px 0; }
+.vn-wave { display: flex; align-items: flex-end; gap: 2px; height: 36px; justify-content: center; }
+.vn-wave i { display: block; width: 3px; background: #111; border-radius: 2px; }
+.vn-msg { display: flex; align-items: center; gap: 8px; }
+.vn-msg .vn-wave { flex: 1; justify-content: flex-start; position: relative; }
+.vn-msg .vn-wave::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: var(--p, 0%); background: rgba(0,0,0,.08); }
+.ot-call { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
+.ot-call.min { inset: auto 12px 96px auto; background: transparent; }
+.ot-card { width: min(420px, 92vw); background: #111; color: #fff; border-radius: 20px; overflow: hidden; position: relative; min-height: 280px; }
+.ot-card video { width: 100%; height: 320px; object-fit: cover; background: #000; }
+#ot-local { position: absolute; right: 12px; top: 12px; width: 96px; height: 140px; border-radius: 12px; object-fit: cover; }
+.ot-meta { padding: 10px 14px 0; }
+.ot-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; }
+.ot-actions button, .ot-call.min button { background: #fff; color: #111; border-radius: 999px; padding: 8px 12px; font-weight: 700; }

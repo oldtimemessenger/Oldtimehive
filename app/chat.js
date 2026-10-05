@@ -1,4 +1,5 @@
 import { api, mutate } from "./store.js";
+import { placeCall, openVoiceNote, voiceBody, bindVoice } from "./comms/index.js";
 
 const REACTS = ["❤️", "😂", "😮", "😢", "🙏", "👍", "👎"];
 let ui = { reply: null, screen: "thread", q: "", call: null, filter: "all" };
@@ -79,6 +80,9 @@ function ttl(mode) {
   if (mode === "after view") return 8e3;
   return 0;
 }
+export function logCall(id, label) {
+  pushMsg(id, { kind: "call", body: label });
+}
 function pushMsg(id, msg) {
   msg.id = msg.id || "m" + Date.now();
   msg.created = Date.now();
@@ -137,7 +141,6 @@ function ctxEsc(s) { return String(s).replace(/&/g, "&" + "amp;").replace(/</g, 
 
 export function openThread(id, ctx) {
   ready(id);
-  if (ui.call && ui.call.id === id) return callScreen(ctx);
   if (ui.screen === "info") return info(ctx, id);
   if (ui.screen === "search") return search(ctx, id);
   if (ui.screen === "media") return media(ctx, id);
@@ -175,16 +178,17 @@ export function openThread(id, ctx) {
     if (label === "Lock chat") { mutate(db => { db.convos.find(x => x.id === id).locked = true; }); ui.screen = "list"; ctx.setChat(null); return; }
     ctx.render();
   });
-  ctx.$("#vcall").onclick = () => startCall(ctx, id, false);
-  ctx.$("#vid").onclick = () => startCall(ctx, id, true);
+  ctx.$("#vcall").onclick = () => placeCall(ctx, id, false);
+  ctx.$("#vid").onclick = () => placeCall(ctx, id, true);
   if (ctx.$("#pinjump")) ctx.$("#pinjump").onclick = () => jump(c.pinnedIds[0]);
   if (ctx.$("#clearrep")) ctx.$("#clearrep").onclick = () => { ui.reply = null; ctx.render(); };
   ctx.$("#emoji").onclick = () => menu(ctx, ["😀", "😂", "❤️", "🔥", "👍", "🙏"], (e) => { ctx.$("#msg").value += e; });
   ctx.$("#attach").onclick = () => attach(ctx, id);
-  ctx.$("#mic").onclick = () => { pushMsg(id, { kind: "voice", body: "Voice message", duration: "0:03" }); ctx.toast("Voice message"); ctx.render(); };
+  ctx.$("#mic").onclick = () => openVoiceNote(ctx, id, pushMsg);
   ctx.$("#msg").oninput = (e) => mutate(db => { db.convos.find(x => x.id === id).draft = e.target.value; });
   ctx.$("#send").onsubmit = (e) => { e.preventDefault(); const body = ctx.$("#msg").value.trim(); if (!body) return; pushMsg(id, { kind: "text", body, replyTo: ui.reply }); ui.reply = null; ctx.render(); };
   ctx.app.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => onMessage(ctx, id, b.dataset.msg));
+  bindVoice(ctx.app);
   ctx.app.querySelectorAll("[data-vote]").forEach(b => b.onclick = (e) => { e.stopPropagation(); const [mid, i] = b.dataset.vote.split(":"); vote(id, mid, +i); ctx.render(); });
   ctx.app.querySelectorAll("[data-retry]").forEach(b => b.onclick = (e) => { e.stopPropagation(); mutate(db => { db.convos.find(x => x.id === id).messages.find(x => x.id === b.dataset.retry).status = "sent"; }); ctx.render(); });
   const box = ctx.$("#msgs"); if (box) box.scrollTop = box.scrollHeight;
@@ -219,7 +223,7 @@ function body(m) {
   if (m.expired) return "This photo has expired.";
   if (m.kind === "photo") return `Photo${m.viewOnce ? " · View once" : ""}${m.caption ? "<div>" + ctxEsc(m.caption) + "</div>" : ""}`;
   if (m.kind === "video") return "Video";
-  if (m.kind === "voice") return "Voice " + (m.duration || "0:04");
+  if (m.kind === "voice") return voiceBody(m);
   if (m.kind === "file") return ctxEsc(m.fileName || "File") + " · " + ctxEsc(m.fileSize || "120 KB");
   if (m.kind === "gif" || m.kind === "sticker") return `<div style="font-size:36px">${ctxEsc(m.body || "")}</div>`;
   if (m.kind === "location") return "Location · " + ctxEsc(m.body || "Shared place");

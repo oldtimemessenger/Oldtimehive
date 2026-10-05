@@ -65,7 +65,11 @@ function persist() {
 }
 export const api = {
   db: () => db,
-  me: () => db.users.find(u => u.id === db.session) || null,
+  me: () => {
+    const as = sessionStorage.getItem("oldtime-as");
+    if (as) return db.users.find(u => u.id === as || u.username === as) || db.users.find(u => u.id === db.session) || null;
+    return db.users.find(u => u.id === db.session) || null;
+  },
   user: (id) => db.users.find(u => u.id === id) || db.users.find(u => u.username === id),
   reset: () => { db = seed(); persist(); },
   signup(form) {
