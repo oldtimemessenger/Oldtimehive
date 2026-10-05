@@ -24,6 +24,12 @@ const ic = {
   heartOn: '<svg viewBox="0 0 24 24" class="navic"><path d="M12 19s-7-4.4-7-9.1A3.9 3.9 0 0 1 12 7a3.9 3.9 0 0 1 7 2.9C19 14.6 12 19 12 19z" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
   comment: '<svg viewBox="0 0 24 24" class="navic"><path d="M7 17.2 5.2 19.4V7.6A2.4 2.4 0 0 1 7.6 5.2h8.8A2.4 2.4 0 0 1 18.8 7.6v6.2a2.4 2.4 0 0 1-2.4 2.4H7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
   share: '<svg viewBox="0 0 24 24" class="navic"><path d="M7.5 14.5c.2-3.6 2.8-5.8 6.3-5.8H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.2 5.4 17.6 8.7 13.2 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  bookmark: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M7 5h10v14l-5-3.5L7 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bookmarkOn: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M7 5h10v14l-5-3.5L7 19z" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
+  volume: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M5 10v4h3l4 3.5v-11L8 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M17.8 7.5a6.5 6.5 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  mute: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M5 10v4h3l4 3.5v-11L8 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 9.5l4 5M20 9.5l-4 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  search: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 16l4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M6 17h12l-1.5-2V11a4.5 4.5 0 0 0-9 0v4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 19.5h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 const esc = (s = "") => String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;").replace(/"/g, "&" + "quot;");
@@ -161,8 +167,8 @@ function updates() {
     <div class="topbar" style="position:absolute;left:0;right:12px;background:transparent">
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
       <span class="row">
-        <button class="icon" id="findposts" aria-label="Search">⌕</button>
-        <button class="icon" id="bell">◉${unread ? '<i class="badge"></i>' : ""}</button>
+        <button class="icon" id="findposts" aria-label="Search">${ic.search}</button>
+        <button class="icon" id="bell" aria-label="Notifications">${ic.bell}${unread ? '<i class="badge"></i>' : ""}</button>
       </span>
     </div>
     <div class="stories" style="position:absolute;top:58px;left:0;right:0;z-index:4">${[me.id, ...byAuthor.keys()].filter((id, i, arr) => arr.indexOf(id) === i).map(id => {
@@ -219,11 +225,11 @@ function head(u, following, p) {
 }
 function rail(p, liked, saved) {
   return `<div class="rail">
-    <button class="act ${liked ? "on" : ""}" data-like="${p.id}"><span class="bubble">♥</span>${fmt(p.likes.length)}</button>
-    <button class="act" data-comment="${p.id}"><span class="bubble">💬</span>${fmt(p.comments.length)}</button>
-    <button class="act" data-share="${p.id}"><span class="bubble">↗</span>${fmt(p.shares || 0)}</button>
-    <button class="act ${saved ? "on" : ""}" data-save="${p.id}"><span class="bubble">🔖</span>${fmt(p.saves.length)}</button>
-    <button class="act" data-mute="${p.id}"><span class="bubble">${muted ? "🔇" : "🔊"}</span></button>
+    <button class="act ${liked ? "on" : ""}" data-like="${p.id}"><span class="bubble">${liked ? ic.heartOn : ic.heart}</span>${fmt(p.likes.length)}</button>
+    <button class="act" data-comment="${p.id}"><span class="bubble">${ic.comment}</span>${fmt(p.comments.length)}</button>
+    <button class="act" data-share="${p.id}"><span class="bubble">${ic.share}</span>${fmt(p.shares || 0)}</button>
+    <button class="act ${saved ? "on" : ""}" data-save="${p.id}"><span class="bubble">${saved ? ic.bookmarkOn : ic.bookmark}</span>${fmt(p.saves.length)}</button>
+    <button class="act" data-mute="${p.id}"><span class="bubble">${muted ? ic.mute : ic.volume}</span></button>
     <img class="avatar" src="${api.user(p.author).avatar}" data-profile="${p.author}" alt="" />
   </div>`;
 }
