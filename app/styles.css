@@ -200,3 +200,4 @@ hr.line { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
 .ot-meta { padding: 10px 14px 0; }
 .ot-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; }
 .ot-actions button, .ot-call.min button { background: #fff; color: #111; border-radius: 999px; padding: 8px 12px; font-weight: 700; }
+.icon .navic { width: 22px; height: 22px; }
