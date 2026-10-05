@@ -22,7 +22,6 @@ app.addEventListener("error", event => {
   }
 }, true);
 let tab = "updates";
-let settingsView = "home";
 let feedMode = "foryou";
 let profileId = null;
 let profileMode = "posts";
@@ -35,6 +34,7 @@ let carouselIndex = {};
 let muted = true;
 let viewer = null;
 let profileMore = false;
+let settingsView = "home";
 
 let feedObserver = null;
 const watchedPosts = new Set();
@@ -83,8 +83,8 @@ function shell(inner, mode) {
   </div></div>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => {
     leaveLive();
-    settingsView = "home";
     tab = b.dataset.tab;
+    settingsView = "home";
     viewer = null;
     if (tab === "profile") { profileId = api.me().id; tab = "updates"; profileMode = "posts"; }
     else { chatId = null; profileId = null; viewer = null; }
@@ -467,7 +467,7 @@ function profile(id) {
     </div>
   </div></section>`);
   $("#back").onclick = () => { profileId = null; render(); };
-  $("#settings-open") && ($("#settings-open").onclick = () => { settingsView = "home"; profileId = null; tab = "settings"; render(); });
+  $("#settings-open") && ($("#settings-open").onclick = () => { profileId = null; tab = "settings"; settingsView = "home"; render(); });
   $("#sharep") && ($("#sharep").onclick = () => { const link = new URL(location.pathname, location.origin); link.searchParams.set("user", u.username); toast(copyText(link.href) ? "Profile link copied" : "Couldn't copy the link"); });
   $("#playall") && ($("#playall").onclick = () => { const first = grid[0]; if (first) { viewer = first.id; render(); } else toast("No posts to play"); });
   $("#more") && ($("#more").onclick = () => { profileMore = !profileMore; render(); });
@@ -563,113 +563,74 @@ function notes() {
 
 function settings() {
   const me = api.me();
+  if (!api.db().settings) mutate(db => { db.settings = { readReceipts: true, lastSeen: "everyone" }; });
+  const prefs = api.db().settings;
   const blocked = api.db().blocks.filter(b => b.by === me.id);
-  let title;
-  let content;
-  switch (settingsView) {
-    case "home":
-      title = "Settings";
-      content = `<button class="listbtn" data-settings-view="account">Account · @${esc(me.username)}</button>
-        <button class="listbtn" data-settings-view="password">Password</button>
-        <button class="listbtn" data-settings-view="privacy">Privacy · ${me.private ? "Private" : "Public"}</button>
-        <button class="listbtn" data-settings-view="chat">Chat privacy</button>
-        <button class="listbtn" data-settings-view="notifications">Notifications · ${me.notifs === false ? "Off" : "On"}</button>
-        <button class="listbtn" data-settings-view="blocked">Blocked · ${blocked.length}</button>
-        <button class="listbtn" data-settings-view="help">Help</button>
-        <button class="listbtn" data-settings-view="about">About</button>
-        <button class="listbtn" id="reset">Reset sample data</button>
-        <button class="btn ghost" id="out">Log out</button>`;
-      break;
-    case "account":
-      title = "Account";
-      content = `<button class="listbtn" id="edit">Edit profile · @${esc(me.username)}</button>`;
-      break;
-    case "password":
-      title = "Password";
-      content = `<label class="sub" for="cp">Current password<input class="field" id="cp" type="password" autocomplete="current-password" /></label>
-        <label class="sub" for="np">New password<input class="field" id="np" type="password" autocomplete="new-password" /></label>
-        <label class="sub" for="confirm-pass">Confirm new password<input class="field" id="confirm-pass" type="password" autocomplete="new-password" /></label>
-        <button class="btn" id="sp">Save password</button>`;
-      break;
-    case "privacy":
-      title = "Privacy";
-      content = `<button class="listbtn" id="priv" aria-pressed="${!!me.private}">Private account · ${me.private ? "On" : "Off"}</button>
-        <p class="sub">Private accounts share posts with followers only.</p>`;
-      break;
-    case "chat": {
-      title = "Chat privacy";
-      if (!api.db().settings) mutate(db => { db.settings = { readReceipts: true, lastSeen: "everyone" }; });
-      const prefs = api.db().settings;
-      content = `<button class="listbtn" id="receipts" aria-pressed="${prefs.readReceipts !== false}">Read receipts · ${prefs.readReceipts === false ? "Off" : "On"}</button>
-        <div><b>Last seen</b><div class="seg" role="group" aria-label="Last seen">${["everyone", "contacts", "nobody"].map(value => `<button data-last-seen="${value}" class="${prefs.lastSeen === value ? "on" : ""}" aria-pressed="${prefs.lastSeen === value}">${value[0].toUpperCase() + value.slice(1)}</button>`).join("")}</div></div>`;
-      break;
-    }
-    case "notifications":
-      title = "Notifications";
-      content = `<button class="listbtn" id="notifs" aria-pressed="${me.notifs !== false}">Notifications · ${me.notifs === false ? "Off" : "On"}</button>`;
-      break;
-    case "blocked":
-      title = "Blocked";
-      content = blocked.map(b => {
-        const u = api.user(b.who);
-        return `<div class="listbtn"><img class="avatar" src="${esc(u?.avatar || "./app/avatar.svg")}" alt="" /><span>@${esc(u?.username || "unknown")}</span><button class="btn ghost small" data-un="${esc(b.who)}">Unblock</button></div>`;
-      }).join("") || `<p class="sub">No blocked users.</p>`;
-      break;
-    case "help":
-      title = "Help";
-      content = `<label class="sub" for="problem">Describe the problem<textarea class="field" id="problem"></textarea></label>
-        <button class="btn" id="save-report">Save local report</button>
-        <p class="sub">Reports stay on this device; no support service is connected.</p>`;
-      break;
-    case "about":
-      title = "About";
-      content = `<p class="sub">Old Time is a local social feed and chat demo. Your data stays in this browser.</p>`;
-      break;
+  const titles = { home: "Settings", password: "Password", privacy: "Privacy", chat: "Chat privacy", notifications: "Notifications", blocked: "Blocked", help: "Help", about: "About" };
+  let content = "";
+  if (settingsView === "home") {
+    content = `<button class="listbtn" id="edit">Account · @${esc(me.username)}</button>
+      <button class="listbtn" data-settings="password">Password · change local password</button>
+      <button class="listbtn" data-settings="privacy">Privacy · ${me.private ? "Private" : "Public"} account</button>
+      <button class="listbtn" data-settings="chat">Chat privacy · Read receipts ${prefs.readReceipts === false ? "Off" : "On"} · Last seen: ${esc(prefs.lastSeen)}</button>
+      <button class="listbtn" data-settings="notifications">Notifications · ${me.notifs === false ? "Off" : "On"}</button>
+      <button class="listbtn" data-settings="blocked">Blocked · ${blocked.length}</button>
+      <button class="listbtn" data-settings="help">Help · report a problem locally</button>
+      <button class="listbtn" data-settings="about">About · local demo and privacy</button>
+      <button class="listbtn" id="reset">Reset sample data · stored on this device</button>
+      <button class="listbtn" id="out">Log out · @${esc(me.username)}</button>`;
+  } else if (settingsView === "password") {
+    content = `<input class="field" id="cp" type="password" autocomplete="current-password" placeholder="Current password" aria-label="Current password" />
+      <input class="field" id="np" type="password" autocomplete="new-password" placeholder="New password" aria-label="New password" />
+      <input class="field" id="confirm-pass" type="password" autocomplete="new-password" placeholder="Confirm password" aria-label="Confirm password" />
+      <button class="btn" id="sp" style="margin-top:8px">Save password</button>`;
+  } else if (settingsView === "privacy") {
+    content = `<button class="listbtn" id="private-toggle" aria-pressed="${!!me.private}">Private account · ${me.private ? "On" : "Off"}</button><p class="sub">Private accounts are visible only to approved followers in this local demo.</p>`;
+  } else if (settingsView === "chat") {
+    content = `<button class="listbtn" id="receipts-toggle" aria-pressed="${prefs.readReceipts !== false}">Read receipts · ${prefs.readReceipts === false ? "Off" : "On"}</button>
+      <b>Last seen</b><div class="seg">${["everyone", "contacts", "nobody"].map(value => `<button data-last-seen="${value}" class="${prefs.lastSeen === value ? "on" : ""}" aria-pressed="${prefs.lastSeen === value}">${value[0].toUpperCase() + value.slice(1)}</button>`).join("")}</div>`;
+  } else if (settingsView === "notifications") {
+    content = `<button class="listbtn" id="notifs-toggle" aria-pressed="${me.notifs !== false}">Notifications · ${me.notifs === false ? "Off" : "On"}</button>`;
+  } else if (settingsView === "blocked") {
+    content = blocked.map(b => `<div class="listbtn"><span>@${esc(api.user(b.who)?.username || "unknown")}</span><button data-un="${esc(b.who)}">Unblock</button></div>`).join("") || `<div class="sub">No blocked users.</div>`;
+  } else if (settingsView === "help") {
+    content = `<textarea class="field" id="problem" placeholder="Describe the problem" aria-label="Describe the problem"></textarea><button class="btn" id="save-report">Save local report</button><p class="sub">Reports remain on this device; no support service is connected.</p>`;
+  } else if (settingsView === "about") {
+    content = `<p class="sub">Old Time is a social feed and chat local prototype. Accounts, posts, messages, and reports stay in this browser; no server-backed service is connected. Do not use real passwords or sensitive data. Be decent.</p>`;
   }
-  shell(`<section class="screen on"><div class="scroll page"><button id="settings-back" class="icon" aria-label="${settingsView === "home" ? "Back to profile" : "Back to Settings"}">${ic.back}</button><div class="h1">${title}</div><div class="settings-section">${content}</div></div></section>`);
-  const bind = (selector, handler) => {
-    app.querySelectorAll(selector).forEach(button => button.onclick = () => {
-      try { handler(button); } catch (e) { toast(e.message); }
-    });
-  };
-  bind("#settings-back", () => {
-    if (settingsView === "home") { tab = "updates"; profileId = me.id; }
-    settingsView = "home";
+  shell(`<section class="screen on"><div class="scroll page"><button id="settings-back" class="icon" aria-label="${settingsView === "home" ? "Back to profile" : "Back to Settings"}">${ic.back}</button><div class="h1">${titles[settingsView]}</div>${content}</div></section>`);
+  const save = (change, message) => {
+    try { mutate(change); } catch (e) { toast(e.message); return false; }
     render();
-  });
-  bind("[data-settings-view]", button => { settingsView = button.dataset.settingsView; render(); });
-  bind("#edit", editProfile);
-  bind("#out", () => { api.logout(); settingsView = "home"; tab = "updates"; chatId = null; profileId = null; viewer = null; render(); });
-  bind("#priv", () => { mutate(() => { api.me().private = !api.me().private; }); render(); });
-  bind("#sp", () => {
+    if (message) toast(message);
+    return true;
+  };
+  $("#settings-back").onclick = () => {
+    if (settingsView !== "home") settingsView = "home";
+    else { tab = "updates"; profileId = me.id; }
+    render();
+  };
+  app.querySelectorAll("[data-settings]").forEach(b => b.onclick = () => { settingsView = b.dataset.settings; render(); });
+  $("#edit") && ($("#edit").onclick = editProfile);
+  $("#sp") && ($("#sp").onclick = () => {
     const password = $("#np").value;
     if ($("#cp").value !== api.me().password) return toast("Current password is wrong");
     if (password.length < 6) return toast("Password needs 6+ characters");
     if (password !== $("#confirm-pass").value) return toast("Passwords do not match");
-    mutate(() => { api.me().password = password; });
-    settingsView = "home";
-    render();
-    toast("Password updated");
+    if (save(db => { db.users.find(u => u.id === me.id).password = password; })) { settingsView = "home"; render(); toast("Password updated"); }
   });
-  bind("#receipts", () => { mutate(db => { db.settings.readReceipts = db.settings.readReceipts === false; }); render(); });
-  bind("[data-last-seen]", button => { mutate(db => { db.settings.lastSeen = button.dataset.lastSeen; }); render(); });
-  bind("#notifs", () => { mutate(() => { api.me().notifs = api.me().notifs === false; }); render(); });
-  bind("[data-un]", button => { mutate(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === button.dataset.un)); }); render(); });
-  bind("#save-report", () => {
+  $("#private-toggle") && ($("#private-toggle").onclick = () => save(db => { const u = db.users.find(u => u.id === me.id); u.private = !u.private; }));
+  $("#receipts-toggle") && ($("#receipts-toggle").onclick = () => save(db => { db.settings.readReceipts = db.settings.readReceipts === false; }));
+  app.querySelectorAll("[data-last-seen]").forEach(b => b.onclick = () => save(db => { db.settings.lastSeen = b.dataset.lastSeen; }));
+  $("#notifs-toggle") && ($("#notifs-toggle").onclick = () => save(db => { const u = db.users.find(u => u.id === me.id); u.notifs = u.notifs === false; }));
+  app.querySelectorAll("[data-un]").forEach(b => b.onclick = () => save(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === b.dataset.un)); }, "Unblocked"));
+  $("#save-report") && ($("#save-report").onclick = () => {
     const reason = $("#problem").value.trim();
     if (!reason) return toast("Describe the problem first");
-    mutate(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason, at: Date.now() }));
-    $("#problem").value = "";
-    toast("Report saved on this device");
+    save(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason, at: Date.now() }), "Report saved on this device");
   });
-  bind("#reset", () => {
-    if (!confirm("Delete all local posts, messages, and accounts and restore sample data?")) return;
-    sessionStorage.removeItem("oldtime-as");
-    api.reset();
-    api.login("you@oldtime.app", "oldtime");
-    settingsView = "home";
-    render();
-  });
+  $("#out") && ($("#out").onclick = () => { api.logout(); settingsView = "home"; tab = "updates"; chatId = null; profileId = null; viewer = null; render(); });
+  $("#reset") && ($("#reset").onclick = () => { if (!confirm("Delete all local posts, messages, and accounts and restore sample data?")) return; sessionStorage.removeItem("oldtime-as"); api.reset(); api.login("you@oldtime.app", "oldtime"); settingsView = "home"; render(); });
 }
 
 const params = new URLSearchParams(location.search);
