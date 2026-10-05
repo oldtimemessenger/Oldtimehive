@@ -53,10 +53,10 @@ function shell(inner, mode) {
   app.innerHTML = `<div class="stage"><div class="phone ${light ? "light" : ""}">
     ${inner}
     <nav class="nav ${light ? "lightnav" : ""}">
-      <button data-tab="updates" aria-label="Home"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button data-tab="updates" aria-label="Home"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path fill="currentColor" d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3l9-8z"/></svg></button>
       <button id="create-open" aria-label="Create"><span class="fab" aria-hidden="true">+</span></button>
-      <button data-tab="chat" aria-label="Chat">${ic.comment}</button>
-      <button data-tab="settings" aria-label="Profile"><span class="orb" aria-hidden="true"></span></button>
+      <button data-tab="chat" aria-label="Chat"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path fill="currentColor" d="M7 3h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H9l-5 3v-4a4 4 0 0 1-1-3V7a4 4 0 0 1 4-4z"/></svg></button>
+      <button data-tab="settings" aria-label="Profile"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><circle fill="currentColor" cx="12" cy="7" r="4"/><path fill="currentColor" d="M4 21v-2a8 8 0 0 1 16 0v2H4z"/></svg></button>
     </nav>
     <div class="toast"></div>
     <div class="sheet" id="sheet"></div>
