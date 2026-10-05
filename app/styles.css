@@ -100,6 +100,9 @@ h1, .h1 { font-family: var(--serif); font-size: 32px; font-weight: 560; letter-s
   width: 100%; background: #14161d; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; outline: none; margin: 10px 0;
 }
 .listbtn { width: 100%; text-align: left; padding: 12px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+.settings-section { display: grid; gap: 12px; margin-top: 16px; }
+.settings-section label { display: grid; gap: 6px; }
+.settings-section .listbtn > span { flex: 1; }
 .sheet {
   position: absolute; inset: 0; background: rgba(0,0,0,.55); z-index: 20; display: none; align-items: flex-end;
 }
