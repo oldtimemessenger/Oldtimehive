@@ -1,8 +1,15 @@
 // Voice notes use MediaRecorder, not WebRTC. Record → preview → compress → upload → chat message.
 
 import { supabaseConfig } from "./config.js";
+import { api } from "../store.js";
 
 const cache = new Map();
+let cancelRecording = null;
+
+export function closeVoiceNote() {
+  cancelRecording?.();
+  players.forEach(p => p.audio.pause());
+}
 
 export function formatDur(sec) {
   const s = Math.max(0, Math.round(sec || 0));
@@ -12,7 +19,7 @@ export function formatDur(sec) {
 export function openVoiceNote(ctx, convoId, pushMsg) {
   const sheet = ctx.$("#sheet");
   sheet.classList.add("on");
-  const state = { rec: null, chunks: [], blob: null, url: null, peaks: [], paused: false, started: 0, elapsed: 0, timer: null, stream: null };
+  const state = { rec: null, chunks: [], blob: null, url: null, peaks: [], paused: false, started: 0, elapsed: 0, timer: null, stream: null, cancelled: false, preview: null };
   const draw = () => {
     sheet.innerHTML = `<div class="panel vn-panel">
       <div class="grab"></div>
@@ -35,8 +42,8 @@ export function openVoiceNote(ctx, convoId, pushMsg) {
     if (ctx.$("#vn-pause")) ctx.$("#vn-pause").onclick = () => { state.rec.pause(); state.paused = true; stopTick(); draw(); };
     if (ctx.$("#vn-resume")) ctx.$("#vn-resume").onclick = () => { state.rec.resume(); state.paused = false; startTick(); draw(); };
     if (ctx.$("#vn-stop")) ctx.$("#vn-stop").onclick = () => state.rec.stop();
-    if (ctx.$("#vn-play")) ctx.$("#vn-play").onclick = () => { const a = new Audio(state.url); a.play(); };
-    if (ctx.$("#vn-send")) ctx.$("#vn-send").onclick = () => send().catch(err => fail(err));
+    if (ctx.$("#vn-play")) ctx.$("#vn-play").onclick = () => { state.preview?.pause(); state.preview = new Audio(state.url); state.preview.play().catch(fail); };
+    if (ctx.$("#vn-send")) ctx.$("#vn-send").onclick = () => { ctx.$("#vn-send").disabled = true; send().catch(err => { fail(err); if (ctx.$("#vn-send")) ctx.$("#vn-send").disabled = false; }); };
   };
   function bars(peaks) {
     const src = peaks.length ? peaks : Array(24).fill(0.15);
@@ -47,17 +54,19 @@ export function openVoiceNote(ctx, convoId, pushMsg) {
     if (el) el.textContent = err?.name === "NotAllowedError" ? "Microphone permission denied" : (err?.message || "Could not record");
   }
   async function record() {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Recording is not available");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") throw new Error("Recording is not available");
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (state.cancelled || !sheet.isConnected) { state.stream.getTracks().forEach(t => t.stop()); return; }
     const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "";
     state.rec = new MediaRecorder(state.stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : { audioBitsPerSecond: 24000 });
     state.chunks = [];
     state.rec.ondataavailable = (e) => { if (e.data.size) state.chunks.push(e.data); };
     state.rec.onstop = () => {
       stopTick();
+      state.stream.getTracks().forEach(t => t.stop());
+      if (state.cancelled || !sheet.isConnected) { state.rec = null; return; }
       state.blob = new Blob(state.chunks, { type: state.rec.mimeType || "audio/webm" });
       state.url = URL.createObjectURL(state.blob);
-      state.stream.getTracks().forEach(t => t.stop());
       state.rec = null;
       draw();
     };
@@ -78,39 +87,27 @@ export function openVoiceNote(ctx, convoId, pushMsg) {
   }
   function stopTick() { clearInterval(state.timer); state.timer = null; }
   function cancel() {
+    state.cancelled = true;
     stopTick();
-    state.rec?.stop();
+    state.preview?.pause();
+    if (state.rec && state.rec.state !== "inactive") state.rec.stop();
     state.stream?.getTracks().forEach(t => t.stop());
     if (state.url) URL.revokeObjectURL(state.url);
     sheet.classList.remove("on");
+    cancelRecording = null;
   }
   async function send() {
-    const id = "m" + Date.now();
-    pushMsg(convoId, { id, kind: "voice", body: "Voice message", duration: formatDur(state.elapsed), status: "sending", peaks: state.peaks.slice(-32) });
+    if (!state.blob?.size) throw new Error("Record a voice note first");
+    state.preview?.pause();
+    const id = "m" + crypto.randomUUID();
+    const media = await uploadVoice(state.blob, id);
+    if (state.cancelled) return;
+    pushMsg(convoId, { id, kind: "voice", body: "Voice message", media, duration: formatDur(state.elapsed), status: "sending", peaks: state.peaks.slice(-32), fileSize: Math.round(state.blob.size / 1024) + " KB" });
+    if (state.url) URL.revokeObjectURL(state.url);
     sheet.classList.remove("on");
     ctx.render();
-    try {
-      const media = await uploadVoice(state.blob, id);
-      cache.set(id, state.url);
-      const { mutate } = await import("../store.js");
-      mutate(db => {
-        const m = db.convos.find(c => c.id === convoId)?.messages.find(x => x.id === id);
-        if (!m) return;
-        m.media = media;
-        m.status = "delivered";
-        m.fileSize = Math.round(state.blob.size / 1024) + " KB";
-      });
-      ctx.render();
-    } catch (err) {
-      const { mutate } = await import("../store.js");
-      mutate(db => {
-        const m = db.convos.find(c => c.id === convoId)?.messages.find(x => x.id === id);
-        if (m) { m.status = "failed"; m.media = ""; }
-      });
-      ctx.toast(err.message || "Upload failed");
-      ctx.render();
-    }
   }
+  cancelRecording = cancel;
   draw();
 }
 
@@ -125,9 +122,8 @@ async function uploadVoice(blob, id) {
     if (!res.ok) throw new Error("Upload failed");
     return cfg.url + "/storage/v1/object/public/voice-notes/" + id + ".webm";
   }
-  const dataUrl = await blobToData(blob);
-  try { localStorage.setItem("oldtime-voice-" + id, dataUrl); } catch { throw new Error("Upload failed"); }
-  return dataUrl;
+  if (blob.size > 2 * 1024 * 1024) throw new Error("Voice note is too large for this local demo");
+  return blobToData(blob);
 }
 
 function blobToData(blob) {
@@ -170,6 +166,8 @@ export function bindVoice(root) {
 
 function mediaOf(id) {
   if (cache.has(id)) return cache.get(id);
+  const message = api.db().convos.filter(c => c.members.includes(api.me()?.id)).flatMap(c => c.messages).find(m => m.id === id);
+  if (message?.media) return message.media;
   const stored = localStorage.getItem("oldtime-voice-" + id);
   return stored || "";
 }
@@ -190,7 +188,7 @@ function toggle(id, btn) {
     p = { audio };
     players.set(id, p);
   }
-  if (p.audio.paused) { p.audio.play(); btn.textContent = "Pause"; }
+  if (p.audio.paused) { p.audio.play().then(() => { btn.textContent = "Pause"; }).catch(() => { btn.textContent = "Unavailable"; }); }
   else { p.audio.pause(); btn.textContent = "Play"; }
 }
 

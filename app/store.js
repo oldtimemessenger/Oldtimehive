@@ -61,7 +61,7 @@ function load() {
 }
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(db)); }
-  catch { /* media too large */ }
+  catch { throw new Error("Browser storage is full or unavailable. Remove large media or enable site storage, then try again."); }
 }
 export const api = {
   db: () => db,
@@ -74,18 +74,22 @@ export const api = {
   reset: () => { db = seed(); persist(); },
   signup(form) {
     const username = (form.username || "").toLowerCase();
+    const email = (form.email || "").trim().toLowerCase();
     if (db.users.some(u => u.username === username)) throw new Error("Username taken");
     if (!/^[a-z0-9_]{3,24}$/.test(username)) throw new Error("Username must be 3–24 lowercase letters, numbers, or _");
-    if (!form.email || !form.email.includes("@")) throw new Error("Enter a real email");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter a real email");
+    if (db.users.some(u => u.email.toLowerCase() === email)) throw new Error("Email already registered");
     if (!form.password || form.password.length < 6) throw new Error("Password needs 6+ characters");
     const id = "u" + Date.now();
-    db.users.push({ id, username, name: form.name || username, bio: form.bio || "", avatar: form.avatar || av("photo-1534528741775-53994a69daeb"), city: form.city || "Miami", verified: false, private: false, followers: [], following: [], email: form.email, password: form.password, birthday: form.birthday });
-    db.session = id; persist();
+    mutate(db => {
+      db.users.push({ id, username, name: form.name || username, bio: form.bio || "", avatar: form.avatar || av("photo-1534528741775-53994a69daeb"), city: form.city || "Miami", verified: false, private: false, followers: [], following: [], email, password: form.password, birthday: form.birthday });
+      db.session = id;
+    });
   },
   login(email, password) {
-    const u = db.users.find(x => x.email === email || x.username === email);
+    const u = db.users.find(x => x.email.toLowerCase() === email.toLowerCase() || x.username === email.toLowerCase());
     if (!u || !password || u.password !== password) throw new Error("Email or password is wrong");
-    db.session = u.id; persist();
+    mutate(db => { db.session = u.id; });
   },
   oauth(provider) {
     const email = provider + "@oldtime.app";
@@ -97,18 +101,24 @@ export const api = {
     }
     db.session = u.id; persist();
   },
-  logout() { db.session = null; persist(); },
+  logout() { sessionStorage.removeItem("oldtime-as"); mutate(db => { db.session = null; }); },
   blocked(a, b) { return db.blocks.some(x => (x.by === a && x.who === b) || (x.by === b && x.who === a)); },
   canSee(authorId) {
     const me = this.me();
     const author = this.user(authorId);
     if (!author) return false;
     if (me && this.blocked(me.id, author.id)) return false;
-    if (author.private && me && author.id !== me.id && !author.followers.includes(me.id)) return false;
+    if (author.private && author.id !== me?.id && !author.followers.includes(me?.id)) return false;
     return true;
   },
+  canSeePost(post) {
+    if (!post || !this.canSee(post.author)) return false;
+    const me = this.me();
+    const author = this.user(post.author);
+    return post.visibility !== "followers" || me?.id === author.id || author.followers.includes(me?.id);
+  },
   posts() {
-    return db.posts.filter(p => this.canSee(p.author));
+    return db.posts.filter(p => this.canSeePost(p));
   },
   ranked(mode) {
     const me = this.me();
@@ -124,8 +134,13 @@ function score(p, me) {
   const small = (p.views || 0) < 3000 ? 0.35 : 0;
   return completion * 5 + (p.replays || 0) * 3 + (p.shares || 0) * 2 + p.saves.length * 2 + p.comments.length * 1.4 + p.likes.length + fresh + interest + small;
 }
-export function mutate(fn) { fn(db); persist(); }
+export function mutate(fn) {
+  const before = structuredClone(db);
+  try { fn(db); persist(); }
+  catch (error) { db = before; throw error; }
+}
 export function fileToData(file) {
+  if (!file || file.size > 2 * 1024 * 1024) return Promise.reject(new Error("Local demo uploads are limited to 2 MB per file."));
   return new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res({ url: r.result, video: file.type.startsWith("video"), name: file.name });
@@ -133,3 +148,8 @@ export function fileToData(file) {
     r.readAsDataURL(file);
   });
 }
+window.addEventListener("storage", e => {
+  if (e.key !== KEY) return;
+  db = load();
+  window.dispatchEvent(new Event("oldtime-data"));
+});

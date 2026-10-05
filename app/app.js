@@ -1,10 +1,26 @@
 import { api, mutate, fileToData } from "./store.js";
 import { ensureConvo as makeConvo, openChatList, openThread } from "./chat.js";
 import { openLive } from "./live.js";
-import { mountComms } from "./comms/index.js";
+import { mountComms, closeVoiceNote } from "./comms/index.js";
+import { icons as ic, icon } from "./icons.js";
+import { openEmojiPicker, closeEmojiPicker } from "./emoji.js";
+import { leaveLive } from "./live.js";
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $("#app");
+app.addEventListener("error", event => {
+  const media = event.target;
+  if (media.tagName === "IMG" && !media.dataset.fallback) {
+    media.dataset.fallback = "true";
+    media.src = new URL("./avatar.svg", import.meta.url).href;
+  }
+  if ((media.tagName === "VIDEO" || media.classList?.contains("fullimg")) && media.closest(".clip") && !media.parentElement.querySelector(".media-fallback")) {
+    const notice = document.createElement("div");
+    notice.className = "media-fallback";
+    notice.textContent = "Media unavailable. Check your connection.";
+    media.parentElement.appendChild(notice);
+  }
+}, true);
 let tab = "updates";
 let feedMode = "foryou";
 let profileId = null;
@@ -19,18 +35,7 @@ let muted = true;
 let viewer = null;
 let profileMore = false;
 
-const ic = {
-  heart: '<svg viewBox="0 0 24 24" class="navic"><path d="M12 19s-7-4.4-7-9.1A3.9 3.9 0 0 1 12 7a3.9 3.9 0 0 1 7 2.9C19 14.6 12 19 12 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
-  heartOn: '<svg viewBox="0 0 24 24" class="navic"><path d="M12 19s-7-4.4-7-9.1A3.9 3.9 0 0 1 12 7a3.9 3.9 0 0 1 7 2.9C19 14.6 12 19 12 19z" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
-  comment: '<svg viewBox="0 0 24 24" class="navic"><path d="M7 17.2 5.2 19.4V7.6A2.4 2.4 0 0 1 7.6 5.2h8.8A2.4 2.4 0 0 1 18.8 7.6v6.2a2.4 2.4 0 0 1-2.4 2.4H7z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
-  share: '<svg viewBox="0 0 24 24" class="navic"><path d="M7.5 14.5c.2-3.6 2.8-5.8 6.3-5.8H16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M13.2 5.4 17.6 8.7 13.2 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-  bookmark: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M7 5h10v14l-5-3.5L7 19z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  bookmarkOn: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M7 5h10v14l-5-3.5L7 19z" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>',
-  volume: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M5 10v4h3l4 3.5v-11L8 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M17.8 7.5a6.5 6.5 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  mute: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M5 10v4h3l4 3.5v-11L8 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 9.5l4 5M20 9.5l-4 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  search: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 16l4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  bell: '<svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path d="M6 17h12l-1.5-2V11a4.5 4.5 0 0 0-9 0v4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 19.5h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-};
+let feedObserver = null;
 
 const esc = (s = "") => String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;").replace(/"/g, "&" + "quot;");
 const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n || 0);
@@ -55,30 +60,39 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", 1600);
 }
 function shell(inner, mode) {
+  closeEmojiPicker();
+  closeVoiceNote();
+  clearInterval(storyTimer);
+  feedObserver?.disconnect();
   const light = mode === "light";
   app.innerHTML = `<div class="stage"><div class="phone ${light ? "light" : ""}">
     ${inner}
     <nav class="nav ${light ? "lightnav" : ""}">
-      <button data-tab="updates" aria-label="Home"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path fill="currentColor" d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3l9-8z"/></svg></button>
-      <button id="create-open" aria-label="Create"><span class="fab" aria-hidden="true">+</span></button>
-      <button data-tab="chat" aria-label="Chat"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><path fill="currentColor" d="M7 3h10a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H9l-5 3v-4a4 4 0 0 1-1-3V7a4 4 0 0 1 4-4z"/></svg></button>
-      <button data-tab="settings" aria-label="Profile"><svg viewBox="0 0 24 24" class="navic" aria-hidden="true"><circle fill="currentColor" cx="12" cy="7" r="4"/><path fill="currentColor" d="M4 21v-2a8 8 0 0 1 16 0v2H4z"/></svg></button>
+      <button data-tab="updates" aria-label="Home" class="${tab === "updates" && !profileId ? "on" : ""}">${ic.home}</button>
+      <button id="create-open" aria-label="Create"><span class="fab">${ic.plus}</span></button>
+      <button data-tab="chat" aria-label="Chat" class="${tab === "chat" ? "on" : ""}">${ic.comment}</button>
+      <button data-tab="profile" aria-label="Profile" class="${profileId === api.me().id ? "on" : ""}">${ic.user}</button>
     </nav>
-    <div class="toast"></div>
+    <div class="toast" role="status"></div>
     <div class="sheet" id="sheet"></div>
     <div class="storyview" id="storyview"></div>
   </div></div>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => {
+    leaveLive();
     tab = b.dataset.tab;
-    if (tab === "settings" && !light) { profileId = api.me().id; tab = "updates"; profileMode = "posts"; }
+    viewer = null;
+    if (tab === "profile") { profileId = api.me().id; tab = "updates"; profileMode = "posts"; }
     else { chatId = null; profileId = null; viewer = null; }
     render();
   });
-  $("#create-open").onclick = () => openCreate();
+  $("#create-open").onclick = () => { leaveLive(); openCreate(); };
+  app.querySelectorAll('button').forEach(button => {
+    const symbols = { "←": ["back", "Back"], "✕": ["close", "Close"], "▶": ["play", "Play"] };
+    const replacement = symbols[button.textContent.trim()];
+    if (replacement) { button.innerHTML = icon(replacement[0]); button.setAttribute("aria-label", replacement[1]); }
+  });
 }
 function render() {
-  const as = new URLSearchParams(location.search).get("as");
-  if (as) sessionStorage.setItem("oldtime-as", as);
   if (!api.me()) return auth();
   mountComms({ toast, esc });
   if (viewer) return postViewer(viewer);
@@ -95,12 +109,13 @@ function auth() {
   app.innerHTML = `<div class="stage"><div class="phone"><div class="auth">
     <div class="word" style="font-size:42px">Old Time</div>
     <p class="sub">Watch. Follow. Send. Find what’s nearby.</p>
+    <p class="sub">Local demo · accounts and posts stay in this browser.</p>
     <input class="field" id="email" placeholder="Email or username" value="you@oldtime.app" />
     <input class="field" id="pass" type="password" placeholder="Password" value="oldtime" />
     <p class="sub" id="err"></p>
     <button class="btn" id="login">Log in</button>
-    <button class="btn ghost" id="google">Continue with Google</button>
-    <button class="btn ghost" id="apple">Continue with Apple</button>
+    <button class="btn ghost" id="google">Try Google demo account</button>
+    <button class="btn ghost" id="apple">Try Apple demo account</button>
     <button class="btn ghost" id="signup">Create account</button>
     <button class="btn ghost" id="forgot">Forgot password</button>
   </div></div></div>`;
@@ -136,21 +151,11 @@ function signup() {
 }
 function forgot() {
   app.innerHTML = `<div class="stage"><div class="phone"><div class="auth">
-    <div class="word">Reset password</div>
-    <input class="field" id="em" placeholder="Email" />
-    <input class="field" id="np" type="password" placeholder="New password" />
-    <button class="btn" id="go">Update password</button>
+    <div class="word">Account recovery</div>
+    <p class="sub">Email verification is not connected in this local demo. A verified recovery link is required before resetting a password. You can change your password in Settings while signed in.</p>
     <button class="btn ghost" id="back">Back</button>
-    <p class="sub" id="err"></p>
   </div></div></div>`;
   $("#back").onclick = auth;
-  $("#go").onclick = () => {
-    const u = api.db().users.find(x => x.email === $("#em").value.trim());
-    if (!u) return $("#err").textContent = "No account for that email";
-    if ($("#np").value.length < 6) return $("#err").textContent = "Password needs 6+ characters";
-    mutate(db => { db.users.find(x => x.id === u.id).password = $("#np").value; db.resets.push({ email: u.email, at: Date.now() }); });
-    auth();
-  };
 }
 
 function updates() {
@@ -162,11 +167,10 @@ function updates() {
   const unread = api.db().notes.filter(n => n.user === me.id && !n.read).length;
   shell(`<section class="screen on">
     <div class="feed" id="feed">${posts.map(postCard).join("") || `<div class="empty">Nothing in this feed yet.</div>`}</div>
-    <button class="hooktop" id="hook">+ Create</button>
-    <button class="hooktop" id="golive" style="top:58px">Live</button>
     <div class="topbar" style="position:absolute;left:0;right:12px;background:transparent">
       <div class="pills"><button data-feed="foryou" class="${feedMode === "foryou" ? "on" : ""}">For You</button><button data-feed="following" class="${feedMode === "following" ? "on" : ""}">Following</button></div>
       <span class="row">
+        <button class="icon" id="golive" aria-label="Live camera preview">${ic.video}</button>
         <button class="icon" id="findposts" aria-label="Search">${ic.search}</button>
         <button class="icon" id="bell" aria-label="Notifications">${ic.bell}${unread ? '<i class="badge"></i>' : ""}</button>
       </span>
@@ -179,17 +183,21 @@ function updates() {
   $("#bell").onclick = () => { tab = "notes"; render(); };
   $("#findposts").onclick = () => { tab = "search"; render(); };
   app.querySelectorAll("[data-story]").forEach(b => b.onclick = () => openStory(b.dataset.story));
-  $("#hook").onclick = () => { createKind = "video"; openCreate(); };
   $("#golive").onclick = () => openLive({ shell, toast, app, $: (q) => $(q), render });
   app.querySelectorAll("[data-feed]").forEach(b => b.onclick = () => { feedMode = b.dataset.feed; render(); });
   bindPosts();
-  const vids = [...app.querySelectorAll("video")];
-  const io = new IntersectionObserver((ents) => ents.forEach(en => {
+}
+function observeVideos() {
+  const vids = [...app.querySelectorAll(".clip video")];
+  feedObserver = new IntersectionObserver((ents) => ents.forEach(en => {
     const v = en.target;
-    if (en.isIntersecting) { v.muted = muted; v.play().catch(() => {}); watch(v.dataset.id); }
+    if (en.isIntersecting) { v.muted = muted; v.play().catch(() => {}); if (!v.dataset.watched) { watch(v.dataset.id); v.dataset.watched = "true"; } }
     else v.pause();
   }), { threshold: 0.65 });
-  vids.forEach(v => io.observe(v));
+  vids.forEach(v => {
+    feedObserver.observe(v);
+    v.ontimeupdate = () => { const p = api.db().posts.find(p => p.id === v.dataset.id); if (p?.trim && v.currentTime >= p.trim) v.currentTime = 0; };
+  });
 }
 function postCard(p) {
   const u = api.user(p.author);
@@ -198,16 +206,18 @@ function postCard(p) {
   const saved = p.saves.includes(me.id);
   const following = me.following.includes(u.id) || u.id === me.id;
   const media = p.kind === "video"
-    ? `<video src="${p.media[0]}" data-id="${p.id}" loop playsinline ${muted ? "muted" : ""}></video>`
+    ? `<video src="${p.media[0]}" data-id="${p.id}" loop playsinline preload="metadata" ${muted ? "muted" : ""}></video>`
     : p.kind === "text"
       ? `<div class="textpost" style="height:100%;background:${p.color}"><p>${esc(p.caption)}</p></div>`
       : `<img class="fullimg" src="${p.media[carouselIndex[p.id] || 0]}" alt="" data-dbl="${p.id}" />`;
   return `<article class="clip" data-id="${p.id}">${media}<div class="shade"></div>
     <div class="rail">
-      <button class="act ${liked ? "on" : ""}" data-like="${p.id}">${liked ? ic.heartOn : ic.heart}${fmt(p.likes.length)}</button>
-      <button class="act" data-comment="${p.id}">${ic.comment}${fmt(p.comments.length)}</button>
-      <button class="act" data-share="${p.id}">${ic.share}</button>
+      <button class="act ${liked ? "on" : ""}" data-like="${p.id}" aria-label="Like post" aria-pressed="${liked}">${liked ? ic.heartOn : ic.heart}${fmt(p.likes.length)}</button>
+      <button class="act" data-comment="${p.id}" aria-label="Comments">${ic.comment}${fmt(p.comments.length)}</button>
+      <button class="act" data-share="${p.id}" aria-label="Share post">${ic.share}</button>
+      ${p.kind === "video" ? `<button class="act" data-mute="${p.id}" aria-label="${muted ? "Unmute" : "Mute"} video">${muted ? ic.mute : ic.volume}</button>` : ""}
     </div>
+    ${p.kind === "carousel" ? `<div class="carousel-nav">${p.media.map((_, i) => `<button data-dot="${p.id}:${i}" aria-label="Photo ${i + 1} of ${p.media.length}" aria-pressed="${i === (carouselIndex[p.id] || 0)}" class="${i === (carouselIndex[p.id] || 0) ? "on" : ""}"></button>`).join("")}</div>` : ""}
     <div class="meta" style="bottom:158px">
       <div class="handle"><span class="orb"></span> <button data-profile="${u.id}">${esc(u.name)}</button> ${following ? "" : `<button class="followpill" data-follow="${u.id}">Follow</button>`}</div>
       <div class="cap">${esc(p.caption)}</div>
@@ -215,7 +225,7 @@ function postCard(p) {
     <div class="soundbar">
       <img src="${u.avatar}" alt="" />
       <div><b>${esc(p.sound || "Original audio")}</b><div class="sub">▶ ${fmt(p.views || 0)}</div></div>
-      <button class="remix" data-save="${p.id}">＋</button>
+      <button class="remix ${saved ? "on" : ""}" data-save="${p.id}" aria-label="Save post" aria-pressed="${saved}">${saved ? ic.bookmarkOn : ic.bookmark}</button>
       <button class="remix" data-share="${p.id}">Share</button>
     </div>
   </article>`;
@@ -234,6 +244,7 @@ function rail(p, liked, saved) {
   </div>`;
 }
 function bindPosts() {
+  observeVideos();
   app.querySelectorAll("[data-like]").forEach(b => b.onclick = (e) => { e.stopPropagation(); like(b.dataset.like); });
   app.querySelectorAll("[data-save]").forEach(b => b.onclick = (e) => { e.stopPropagation(); save(b.dataset.save); });
   app.querySelectorAll("[data-comment]").forEach(b => b.onclick = (e) => { e.stopPropagation(); comments(b.dataset.comment); });
@@ -284,8 +295,8 @@ function follow(id) {
   toast(u.private && !api.me().following.includes(id) ? "Requested" : "Updated");
 }
 function share(id) {
-  const link = "https://oldtime.app/p/" + id;
-  const copied = copyText(link);
+  const link = new URL(location.pathname, location.origin); link.searchParams.set("post", id);
+  const copied = copyText(link.href);
   mutate(db => { const p = db.posts.find(x => x.id === id); p.shares = (p.shares || 0) + 1; if (p.author !== api.me().id) db.notes.unshift({ id: "n" + Date.now(), user: p.author, kind: "share", actor: api.me().id, post: id, body: "shared your post", created: Date.now(), read: false }); });
   render();
   toast(copied ? "Link copied" : "Share counted");
@@ -298,7 +309,8 @@ function comments(id) {
   const draw = () => {
     const p = api.db().posts.find(x => x.id === id);
     sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>Comments</b><div id="clist" style="margin:10px 0;max-height:46vh;overflow:auto"></div>
-      <form id="cform" class="row"><input class="field" id="cbody" placeholder="Add a comment" /><button class="btn small" type="submit">Send</button></form></div>`;
+      <form id="cform" class="row"><input class="field" id="cbody" placeholder="Add a comment" /><button class="icon" id="comment-emoji" type="button" aria-label="Add emoji">${ic.smile}</button><button class="btn small" type="submit">Send</button></form></div>`;
+    $("#comment-emoji").onclick = () => openEmojiPicker($("#cbody"));
     $("#clist").innerHTML = p.comments.map(c => `<div style="margin:10px 0"><div class="row" style="align-items:flex-start"><img src="${api.user(c.author).avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><div><b>@${api.user(c.author).username}</b> ${esc(c.body)}<div class="sub">${ago(c.created)} · <button data-reply="${c.id}">Reply</button> · <button data-clike="${c.id}">♥ ${c.likes.length}</button> ${c.author === api.me().id || p.author === api.me().id ? `<button data-cdel="${c.id}">Delete</button>` : ""}</div>${(c.replies || []).map(r => `<div class="sub" style="margin-top:4px">@${api.user(r.author).username} ${esc(r.body)} ${r.author === api.me().id ? `<button data-rdel="${c.id}:${r.id}">Delete</button>` : ""}</div>`).join("")}</div></div></div>`).join("") || `<div class="sub">No comments yet.</div>`;
     $("#clist").querySelectorAll("[data-reply]").forEach(b => b.onclick = () => { $("#cbody").value = "@" + api.user(p.comments.find(c => c.id === b.dataset.reply).author).username + " "; $("#cbody").dataset.reply = b.dataset.reply; $("#cbody").focus(); });
     $("#clist").querySelectorAll("[data-clike]").forEach(b => b.onclick = () => { mutate(db => { const c = db.posts.find(x => x.id === id).comments.find(x => x.id === b.dataset.clike); const i = c.likes.indexOf(api.me().id); if (i >= 0) c.likes.splice(i, 1); else c.likes.push(api.me().id); }); draw(); });
@@ -328,10 +340,10 @@ function openStory(authorId) {
   const view = $("#storyview");
   view.classList.add("on");
   const show = () => {
-    const s = list[i]; if (!s) { view.classList.remove("on"); return; }
+    const s = list[i]; if (!s) { view.classList.remove("on"); clearInterval(storyTimer); return; }
     view.innerHTML = `<div class="progress"><b id="bar"></b></div>
       <div class="row" style="position:absolute;top:24px;left:12px;right:48px;z-index:2"><img src="${api.user(s.author).avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>@${api.user(s.author).username}</b></div>
-      <button id="sclose" style="position:absolute;top:22px;right:12px;z-index:2">✕</button>
+      <button id="sclose" aria-label="Close story" style="position:absolute;top:22px;right:12px;z-index:2">${ic.close}</button>
       <div style="height:100%;background:${s.color || "#000"}">${s.media ? (String(s.media).startsWith("data:video") || s.kind === "video" ? `<video src="${s.media}" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover"></video>` : `<img src="${s.media}" style="width:100%;height:100%;object-fit:cover" />`) : ""}<div style="position:absolute;left:16px;bottom:90px;font-size:28px;font-family:Fraunces,serif">${esc(s.text || "")}</div></div>`;
     $("#sclose").onclick = () => { view.classList.remove("on"); clearInterval(storyTimer); };
     let w = 0; clearInterval(storyTimer);
@@ -341,6 +353,7 @@ function openStory(authorId) {
 }
 
 function openCreate() {
+  pending = [];
   const sheet = $("#sheet");
   sheet.classList.add("on");
   sheet.innerHTML = `<div class="panel" style="max-height:94%"><div class="grab"></div><b>Create</b>
@@ -348,7 +361,8 @@ function openCreate() {
       <button data-k="video">Video</button><button data-k="photo">Photo</button><button data-k="carousel">Carousel</button><button data-k="text">Text</button><button data-k="story">Story</button>
     </div>
     <textarea class="field" id="cap" placeholder="Caption, with #tags or @names"></textarea>
-    <input class="field" id="loc" placeholder="Location" style="margin-top:8px" value="${api.me().city || "Miami"}" />
+    <button class="icon" id="caption-emoji" aria-label="Add emoji to caption">${ic.smile}</button>
+    <input class="field" id="loc" placeholder="Location" style="margin-top:8px" value="${esc(api.me().city || "Miami")}" />
     <select class="field" id="vis" style="margin-top:8px"><option value="public">Public</option><option value="followers">Followers</option></select>
     <div class="row" style="margin:8px 0;flex-wrap:wrap"><button class="btn ghost small" id="pick">Upload</button><button class="btn ghost small" id="rec">Record</button><input id="file" type="file" accept="image/*,video/*" multiple hidden /><input id="cam" type="file" accept="video/*,image/*" capture="environment" hidden /><span class="sub" id="picked">No file yet</span></div>
     <video id="prev" controls style="width:100%;max-height:160px;display:none;border-radius:12px"></video>
@@ -357,12 +371,15 @@ function openCreate() {
     <button class="btn" id="post" style="margin-top:10px">Post</button></div>`;
   const paint = () => sheet.querySelectorAll("#kinds button").forEach(b => b.classList.toggle("on", b.dataset.k === createKind));
   paint();
+  $("#caption-emoji").onclick = () => openEmojiPicker($("#cap"));
   sheet.querySelector("#kinds").onclick = (e) => { const b = e.target.closest("[data-k]"); if (!b) return; createKind = b.dataset.k; paint(); };
   $("#pick").onclick = () => $("#file").click();
   $("#rec").onclick = () => $("#cam").click();
   const take = async (files) => {
-    pending = [];
-    for (const f of files) pending.push(await fileToData(f));
+    try {
+      pending = [];
+      for (const f of files) pending.push(await fileToData(f));
+    } catch (e) { pending = []; toast(e.message || "Couldn't read media"); return; }
     $("#picked").textContent = pending.length + " ready";
     if (pending[0]?.video) { $("#prev").style.display = "block"; $("#prev").src = pending[0].url; $("#pimg").style.display = "none"; }
     else if (pending[0]) { $("#pimg").style.display = "block"; $("#pimg").src = pending[0].url; $("#prev").style.display = "none"; }
@@ -372,13 +389,17 @@ function openCreate() {
   $("#post").onclick = async () => {
     const caption = $("#cap").value.trim();
     const tags = [...caption.matchAll(/#([a-z0-9_]+)/gi)].map(m => m[1].toLowerCase());
-    if (!caption && createKind !== "photo" && createKind !== "video") return toast("Add a caption");
+    if (["text", "story"].includes(createKind) && !caption && !pending.length) return toast("Add text or media");
     if (["video", "photo", "carousel"].includes(createKind) && !pending.length) return toast("Add a photo or video");
+    if (createKind === "video" && (pending.length !== 1 || !pending[0].video)) return toast("Choose one video");
+    if (createKind === "photo" && (pending.length !== 1 || pending[0].video)) return toast("Choose one photo");
+    if (createKind === "carousel" && (pending.length < 2 || pending.some(p => p.video))) return toast("Choose at least two photos");
+    if (createKind === "story" && pending.length > 1) return toast("Choose one story image or video");
     const trim = Number($("#trim").value) || 0;
-    mutate(db => {
+    try { mutate(db => {
       if (createKind === "story") db.stories.unshift({ id: "s" + Date.now(), author: api.me().id, kind: pending[0]?.video ? "video" : (pending[0] ? "photo" : "text"), media: pending[0]?.url || "", text: caption, created: Date.now(), color: "#1b140c" });
       else db.posts.unshift({ id: "p" + Date.now(), author: api.me().id, kind: createKind, caption: caption || " ", tags, media: pending.map(p => p.url), sound: "Original audio", location: $("#loc").value || api.me().city, visibility: $("#vis").value, trim, likes: [], comments: [], saves: [], created: Date.now(), views: 0, shares: 0, color: "linear-gradient(160deg,#1b140c,#3a2a18)" });
-    });
+    }); } catch (e) { toast(e.message); return; }
     pending = []; sheet.classList.remove("on"); tab = "updates"; profileId = null; render(); toast("Posted");
   };
   sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
@@ -388,33 +409,36 @@ function profile(id) {
   const u = api.user(id);
   const me = api.me();
   if (!u) { profileId = null; return updates(); }
-  const locked = u.private && u.id !== me.id && !u.followers.includes(me.id);
-  const posts = api.db().posts.filter(p => p.author === u.id);
+  const locked = !api.canSee(u.id);
+  const posts = api.posts().filter(p => p.author === u.id);
   const videos = posts.filter(p => p.kind === "video");
-  const saved = api.db().posts.filter(p => p.saves.includes(u.id));
+  const saved = api.posts().filter(p => p.saves.includes(me.id));
   const mine = u.id === me.id;
   const grid = locked ? [] : (profileMode === "videos" ? videos : profileMode === "saved" && mine ? saved : posts);
   const requested = api.db().requests.some(r => r.from === me.id && r.to === u.id);
   shell(`<section class="screen on"><div class="scroll page" style="padding-top:18px">
-    <div class="row" style="justify-content:space-between"><button id="back">←</button><button id="sharep">↗</button></div>
-    <img class="hero-circle" src="${(posts.find(p => p.media?.[0]) || {}).media?.[0] || u.avatar}" alt="" />
+    <div class="row" style="justify-content:space-between"><button id="back">←</button><div class="row">${mine ? `<button id="settings-open" class="icon" aria-label="Settings">${ic.settings}</button>` : ""}<button id="sharep" class="icon" aria-label="Share profile">${ic.share}</button></div></div>
+    <img class="hero-circle" src="${(posts.find(p => p.kind !== "video" && p.media?.[0]) || {}).media?.[0] || u.avatar}" alt="" />
     <div class="row" style="align-items:flex-end;margin-top:-28px">
       <img src="${u.avatar}" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:3px solid #111" />
       <div><b style="font-size:28px">${esc(u.name)}</b><div class="sub">@${u.username}</div>
       <div class="sub">${fmt(posts.reduce((n,p)=>n+(p.views||0),0))} plays · ${fmt(u.followers.length)} followers · ${fmt(u.following.length)} following</div></div>
     </div>
+    <p class="cap">${esc(u.bio || "")}</p><p class="sub">${esc(u.city || "")}</p>
     <div class="row" style="margin:12px 0;gap:8px">${mine ? `<button class="followwide" id="edit">Edit</button><button class="followwide" id="logout">Log out</button>` : `<button class="followwide" id="pfollow">${me.following.includes(u.id) ? "Following" : requested ? "Requested" : "+ Follow"}</button>`}<button class="playround" id="playall">▶</button></div>
+    ${!mine ? `<div class="row profile-actions"><button class="btn ghost small" id="pmsg" ${api.blocked(me.id, u.id) ? "disabled" : ""}>Message</button><button class="btn ghost small" id="pblock">${api.db().blocks.some(b => b.by === me.id && b.who === u.id) ? "Unblock" : "Block"}</button><button class="btn ghost small" id="prep">Report</button></div>` : ""}
+    <div class="seg">${["posts", "videos", ...(mine ? ["saved"] : [])].map(mode => `<button data-m="${mode}" class="${profileMode === mode ? "on" : ""}">${mode[0].toUpperCase() + mode.slice(1)}</button>`).join("")}</div>
     ${locked ? `<div class="empty">This account is private.</div>` : `<div class="row" style="justify-content:space-between"><b>Posts</b><button class="sub" id="more">More</button></div>
       <div class="hooks">${grid.slice(0, profileMore ? grid.length : 8).map(p => `<button class="hookcard" data-open="${p.id}">${p.media?.[0] ? `<img src="${p.kind === "video" ? u.avatar : p.media[0]}" style="width:100%;height:100%;object-fit:cover" />` : `<div style="height:100%;background:${p.color}"></div>`}<span>${esc((p.caption || "post").slice(0, 28))}<br>▶ ${fmt(p.views || 0)}</span></button>`).join("")}</div>
       <div class="row" style="justify-content:space-between;margin-top:14px"><b>Recent</b></div>
-      ${posts.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("")}`}
+      ${grid.slice(0, 5).map(p => `<button class="listbtn" data-open="${p.id}"><img src="${api.user(p.author).avatar}" style="width:36px;height:36px;border-radius:8px;object-fit:cover" /><div><b>${esc(p.caption.slice(0, 32))}</b><div class="sub">${p.kind} · ${fmt(p.likes.length)} likes</div></div></button>`).join("") || `<div class="empty">No ${profileMode} yet.</div>`}`}
   </div></section>`);
   $("#back").onclick = () => { profileId = null; render(); };
-  $("#sharep") && ($("#sharep").onclick = () => toast(copyText("https://oldtime.app/u/" + u.username) ? "Profile link copied" : "Couldn't copy the link"));
-  $("#playall") && ($("#playall").onclick = () => { const first = posts[0]; if (first) { viewer = first.id; render(); } });
+  $("#settings-open") && ($("#settings-open").onclick = () => { profileId = null; tab = "settings"; render(); });
+  $("#sharep") && ($("#sharep").onclick = () => { const link = new URL(location.pathname, location.origin); link.searchParams.set("user", u.username); toast(copyText(link.href) ? "Profile link copied" : "Couldn't copy the link"); });
+  $("#playall") && ($("#playall").onclick = () => { const first = grid[0]; if (first) { viewer = first.id; render(); } else toast("No posts to play"); });
   $("#more") && ($("#more").onclick = () => { profileMore = !profileMore; render(); });
   $("#logout") && ($("#logout").onclick = () => { api.logout(); tab = "updates"; chatId = null; profileId = null; viewer = null; render(); });
-  $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo([u.id]); render(); });
   app.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { profileMode = b.dataset.m; render(); });
   $("#pfollow") && ($("#pfollow").onclick = () => follow(u.id));
   $("#pmsg") && ($("#pmsg").onclick = () => { tab = "chat"; chatId = ensureConvo([u.id]); render(); });
@@ -432,20 +456,33 @@ function editProfile() {
     <input class="field" id="un" value="${esc(me.username)}" placeholder="username" style="margin-top:8px" />
     <input class="field" id="em" value="${esc(me.email || "")}" placeholder="Email" style="margin-top:8px" />
     <textarea class="field" id="bio" style="margin-top:8px">${esc(me.bio || "")}</textarea>
+    <button class="icon" id="bio-emoji" aria-label="Add emoji to bio">${ic.smile}</button>
+    <label class="sub">Profile photo <input class="field" id="avatar-file" type="file" accept="image/*" /></label>
+    <label class="sub">Birthday <input class="field" id="birthday" type="date" value="${esc(me.birthday || "")}" /></label>
     <input class="field" id="city" value="${esc(me.city || "")}" placeholder="City" style="margin-top:8px" />
     <button class="btn" id="savep" style="margin-top:10px">Save</button></div>`;
-  $("#savep").onclick = () => {
+  $("#bio-emoji").onclick = () => openEmojiPicker($("#bio"));
+  $("#savep").onclick = async () => {
     const username = $("#un").value.trim().toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(username)) return toast("Bad username");
     if (api.db().users.some(u => u.username === username && u.id !== me.id)) return toast("Username taken");
-    mutate(db => { const u = db.users.find(x => x.id === me.id); Object.assign(u, { name: $("#nm").value.trim(), username, email: $("#em").value.trim(), bio: $("#bio").value.trim(), city: $("#city").value.trim() }); });
+    const email = $("#em").value.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast("Enter a real email");
+    if (api.db().users.some(u => u.email.toLowerCase() === email && u.id !== me.id)) return toast("Email already registered");
+    const file = $("#avatar-file").files[0];
+    const changes = { name: $("#nm").value.trim() || username, username, email, bio: $("#bio").value.trim(), city: $("#city").value.trim(), birthday: $("#birthday").value };
+    try {
+      if (file && !file.type.startsWith("image/")) return toast("Choose an image");
+      const avatar = file ? (await fileToData(file)).url : me.avatar;
+      mutate(db => { const u = db.users.find(x => x.id === me.id); Object.assign(u, { ...changes, avatar }); });
+    } catch (e) { toast(e.message); return; }
     sheet.classList.remove("on"); render();
   };
   sheet.onclick = (e) => { if (e.target === sheet) sheet.classList.remove("on"); };
 }
 function postViewer(id) {
   const p = api.db().posts.find(x => x.id === id);
-  if (!p) { viewer = null; return profile(profileId); }
+  if (!api.canSeePost(p)) { viewer = null; render(); toast("Post unavailable"); return; }
   shell(`<section class="screen on"><div class="topbar"><button id="back">←</button><b>@${api.user(p.author).username}</b><span></span></div><div class="feed">${postCard(p)}</div></section>`);
   $("#back").onclick = () => { viewer = null; render(); };
   bindPosts();
@@ -460,7 +497,7 @@ function thread(id) {
 
 function search() {
   const q = searchQ.toLowerCase().replace("#", "");
-  const users = api.db().users.filter(u => u.id !== api.me().id && (!q || u.username.includes(q) || u.name.toLowerCase().includes(q)));
+  const users = api.db().users.filter(u => u.id !== api.me().id && !api.blocked(api.me().id, u.id) && (!q || u.username.includes(q) || u.name.toLowerCase().includes(q)));
   const posts = api.posts().filter(p => !q || p.caption.toLowerCase().includes(q) || (p.tags || []).some(t => t.includes(q)) || (p.location || "").toLowerCase().includes(q));
   const tags = [...new Set(api.posts().flatMap(p => p.tags || []))].filter(t => !q || t.includes(q)).slice(0, 8);
   shell(`<section class="screen on"><div class="scroll page"><button class="sub" id="back">← Updates</button><div class="h1">Search</div>
@@ -468,9 +505,10 @@ function search() {
     <div class="chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${tags.map(t => `<button class="chip" data-tag="${t}">#${t}</button>`).join("")}</div>
     ${users.slice(0, 8).map(u => `<button class="listbtn" data-profile="${u.id}"><img src="${u.avatar}" style="width:40px;height:40px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b><div class="sub">${esc(u.bio || u.city || "")}</div></div></button>`).join("")}
     <div class="grid3" style="margin-top:10px">${posts.slice(0, 12).map(p => `<button class="cell" data-open="${p.id}">${p.media?.[0] ? (p.kind === "video" ? `<video src="${p.media[0]}" muted></video>` : `<img src="${p.media[0]}" />`) : `<div class="textpost" style="height:100%"><p style="font-size:12px">${esc(p.caption.slice(0, 30))}</p></div>`}</button>`).join("")}</div>
+    ${!users.length && !posts.length ? `<div class="empty">No results. Try a name, hashtag, or place.</div>` : ""}
   </div></section>`);
   $("#back").onclick = () => { tab = "updates"; render(); };
-  $("#q").oninput = (e) => { searchQ = e.target.value; render(); $("#q").focus(); };
+  $("#q").oninput = (e) => { const position = e.target.selectionStart; searchQ = e.target.value; render(); $("#q").focus(); $("#q").setSelectionRange(position, position); };
   app.querySelectorAll("[data-tag]").forEach(b => b.onclick = () => { searchQ = b.dataset.tag; render(); });
   app.querySelectorAll("[data-profile]").forEach(b => b.onclick = () => { profileId = b.dataset.profile; tab = "updates"; render(); });
   app.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { viewer = b.dataset.open; tab = "updates"; render(); });
@@ -493,27 +531,38 @@ function notes() {
 function settings() {
   const me = api.me();
   const blocked = api.db().blocks.filter(b => b.by === me.id);
-  shell(`<section class="screen on"><div class="scroll page"><div class="h1">Settings</div>
+  shell(`<section class="screen on"><div class="scroll page"><button id="settings-back" class="icon" aria-label="Back to profile">${ic.back}</button><div class="h1">Settings</div>
     <button class="listbtn" id="edit">Account · @${me.username}</button>
     <button class="listbtn" id="pass">Password</button>
     <button class="listbtn" id="priv">Privacy · ${me.private ? "Private" : "Public"} account</button>
     <button class="listbtn" id="blocked">Blocked · ${blocked.length}</button>
     <button class="listbtn" id="notifs">Notifications · ${me.notifs === false ? "off" : "on"}</button>
     <button class="listbtn" id="help">Help · report a problem</button>
-    <button class="listbtn" id="about">About · terms and privacy</button>
+    <button class="listbtn" id="about">About · local demo and privacy</button>
     <button class="listbtn" id="reset">Reset sample data</button>
     <button class="btn ghost" id="out" style="margin-top:16px">Log out</button>
     <div id="extra"></div>
   </div></section>`);
+  $("#settings-back").onclick = () => { tab = "updates"; profileId = me.id; render(); };
   $("#out").onclick = () => { api.logout(); tab = "updates"; chatId = null; profileId = null; viewer = null; render(); };
   $("#edit").onclick = editProfile;
   $("#priv").onclick = () => { mutate(() => { api.me().private = !api.me().private; }); render(); };
   $("#pass").onclick = () => { $("#extra").innerHTML = `<input class="field" id="np" type="password" placeholder="New password" /><button class="btn" id="sp" style="margin-top:8px">Save password</button>`; $("#sp").onclick = () => { if ($("#np").value.length < 6) return toast("6+ characters"); mutate(() => { api.me().password = $("#np").value; }); toast("Password updated"); }; };
   $("#blocked").onclick = () => { $("#extra").innerHTML = blocked.map(b => `<div class="listbtn"><span>@${api.user(b.who)?.username}</span><button data-un="${b.who}">Unblock</button></div>`).join("") || `<div class="sub">No blocked users.</div>`; $("#extra").querySelectorAll("[data-un]").forEach(b => b.onclick = () => { mutate(db => { db.blocks = db.blocks.filter(x => !(x.by === me.id && x.who === b.dataset.un)); }); render(); }); };
   $("#notifs").onclick = () => { mutate(db => { const u = db.users.find(x => x.id === me.id); u.notifs = u.notifs === false; }); render(); };
-  $("#help").onclick = () => { mutate(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason: "help", at: Date.now() })); toast("Sent to help"); };
+  $("#help").onclick = () => {
+    $("#extra").innerHTML = `<textarea class="field" id="problem" placeholder="Describe the problem"></textarea><button class="btn" id="save-report">Save local report</button><p class="sub">Reports remain on this device; no support service is connected.</p>`;
+    $("#save-report").onclick = () => { const reason = $("#problem").value.trim(); if (!reason) return toast("Describe the problem first"); mutate(db => db.reports.push({ id: "h" + Date.now(), by: me.id, target: "app", reason, at: Date.now() })); toast("Report saved on this device"); };
+  };
   $("#about").onclick = () => { $("#extra").innerHTML = `<p class="sub" style="margin-top:8px">Old Time is a social feed and chat. Posts you make stay on this device until a server is connected. Be decent.</p>`; };
-  $("#reset").onclick = () => { api.reset(); api.login("you@oldtime.app", "oldtime"); render(); };
+  $("#reset").onclick = () => { if (!confirm("Delete all local posts, messages, and accounts and restore sample data?")) return; sessionStorage.removeItem("oldtime-as"); api.reset(); api.login("you@oldtime.app", "oldtime"); render(); };
 }
 
+const params = new URLSearchParams(location.search);
+if (params.get("as")) sessionStorage.setItem("oldtime-as", params.get("as"));
+if (params.get("post")) viewer = params.get("post");
+if (params.get("user")) profileId = api.user(params.get("user"))?.id || null;
+window.addEventListener("oldtime-data", () => { if (!$("#sheet.on") && !$("#storyview.on") && !$(".emoji-overlay") && !$("#ftback")) render(); });
+window.addEventListener("error", e => { if (e.error?.message) toast(e.error.message); });
+window.addEventListener("unhandledrejection", e => { if (e.reason?.message) toast(e.reason.message); });
 render();
