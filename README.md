@@ -16,6 +16,15 @@ State is stored in `localStorage` under `oldtime-v1`. The services in `app/store
 
 No Pace in V1.
 
+## Install on a phone
+
+The app can be added to a phone's home screen as a progressive web app (PWA). Service workers require HTTPS, except on localhost; opening `index.html` directly as a file does not enable installation or offline caching.
+
+- On iPhone or iPad, open the HTTPS site in Safari, tap Share, then choose **Add to Home Screen**.
+- On Android, open the HTTPS site in Chrome and choose **Install app** or **Add to Home screen** from the browser menu.
+
+The service worker caches the app shell so it can reopen offline. Posts, accounts, and messages remain local to that browser, and externally hosted media and fonts may not be available offline. A PWA is still a website; it does not create App Store or Google Play listings.
+
 ## Icons, emoji, and screens
 
 Interface controls use shared, accessible SVG icons in `app/icons.js`; emoji remain colorful content, not navigation icons. The emoji picker supports categories, recent selections, country-name/code flag search, skin tones on supported gestures, and insertion at the cursor. It is available in chat, reactions, stickers, comments, captions, and profile bios. Noto Color Emoji provides a cross-platform font fallback when Google Fonts is reachable; native emoji fonts remain available offline. Artwork can vary by platform and is not Instagram/WhatsApp proprietary artwork.
@@ -31,6 +40,8 @@ The Live screen is an explicitly labeled camera/microphone preview; it does not 
 Before public launch, implement server-backed authentication/OAuth and verified recovery, per-user authorized database/storage access, media hosting, real-time messaging/presence and delivery acknowledgements, live broadcast infrastructure, moderation/report handling, notification delivery/preferences, and published terms/privacy policies. The optional call-signaling integration does not provide those services. Audit the SQL schema and policies before deployment.
 
 No package manager, build, lint, or test scripts are configured. Serve the app as above; validate JavaScript syntax with `node --check` and smoke-check the browser flows. Sample media and web fonts require access to their external providers; unavailable media displays a fallback instead of a blank screen.
+
+Before release, verify sign-in, feed, chat, uploads, and keyboard behavior on physical iOS and Android devices, including small screens and safe-area insets. This repository does not include native iOS/Android projects or a production backend; store distribution and multi-user service requirements are separate work.
 
 ## Calls and voice notes
 
