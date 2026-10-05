@@ -1,37 +1,47 @@
 import { api, mutate } from "./store.js";
+import { icons as ic } from "./icons.js";
 
 let room = null;
 let stream = null;
 let facing = "user";
+let cameraVersion = 0;
 
 function esc(s = "") {
   return String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;");
 }
 
 export function openLive(ctx) {
+  leaveLive();
   ensure();
-  const lives = api.db().lives.filter(l => l.live);
   ctx.shell(`<section class="screen on"><div class="scroll page">
-    <div class="topbar" style="padding:8px 0"><b>Live</b><button id="golive" class="btn small">Go Live</button></div>
-    ${lives.map(l => `<button class="listbtn" data-watch="${l.id}"><img src="${api.user(l.host).avatar}" style="width:48px;height:48px;border-radius:50%;object-fit:cover" /><div><b>${esc(api.user(l.host).name)}</b><div class="sub">${esc(l.title)} · ${l.viewers} watching</div></div></button>`).join("") || `<div class="empty">No one is live. Go live to start.</div>`}
+    <div class="topbar" style="padding:8px 0"><button id="live-back" class="icon" aria-label="Back">${ic.back}</button><b>Live camera</b></div>
+    <div class="empty">Preview your camera and microphone locally. Public broadcasting and remote viewers require a streaming backend and are not connected.</div>
+    <button id="golive" class="btn">Start camera preview</button>
   </div></section>`);
-  ctx.$("#golive").onclick = () => start(ctx);
-  ctx.app.querySelectorAll("[data-watch]").forEach(b => b.onclick = () => watch(ctx, b.dataset.watch));
+  ctx.$("#live-back").onclick = () => { leaveLive(); ctx.render(); };
+  ctx.$("#golive").onclick = async () => {
+    const button = ctx.$("#golive");
+    button.disabled = true;
+    try { await start(ctx); }
+    finally { if (button.isConnected) button.disabled = false; }
+  };
 }
 
 function ensure() {
   mutate(db => {
-    db.lives = db.lives || [{ id: "live1", host: "u1", title: "Night drive", live: true, viewers: 128, camera: true, muted: false, comments: [{ id: "lc1", author: "u2", body: "The lights look good", created: Date.now() - 6e4 }] }];
+    db.lives = db.lives || [];
   });
 }
 
 async function start(ctx) {
   const me = api.me();
-  const id = "live" + Date.now();
-  mutate(db => db.lives.unshift({ id, host: me.id, title: "Live", live: true, viewers: 1, camera: true, muted: false, comments: [] }));
+  const id = "live" + crypto.randomUUID();
+  mutate(db => db.lives.unshift({ id, host: me.id, title: "Camera preview", live: true, viewers: 0, camera: true, muted: false, comments: [] }));
   room = api.db().lives.find(l => l.id === id);
   await camera(true);
+  if (room?.id !== id) return;
   draw(ctx, true);
+  if (!stream) ctx.toast("Camera unavailable. Check permissions and use HTTPS or localhost.");
 }
 
 function watch(ctx, id) {
@@ -51,17 +61,17 @@ function draw(ctx, host) {
     </div>
     <div class="ft-top">
       <button id="ftback">←</button>
-      <div><b>${esc(u.name)}</b><div class="sub">${room.viewers} watching · ${room.muted ? "mic off" : "mic on"}</div></div>
-      <span class="livepill">LIVE</span>
+      <div><b>${esc(u.name)}</b><div class="sub">Local preview · ${room.muted ? "mic off" : "mic on"}</div></div>
+      <span class="livepill">PREVIEW</span>
     </div>
     <div class="ft-pip" id="pip">${host ? `<video id="selfvid" autoplay playsinline muted></video>` : `<img src="${me.avatar}" alt="" />`}</div>
     <div class="ft-comments" id="comments">${room.comments.map(c => `<div><b>${esc(api.user(c.author)?.username || "")}</b> ${esc(c.body)}</div>`).join("")}</div>
     <form class="ft-say" id="say"><input id="line" placeholder="Say something" /><button type="submit">Send</button></form>
     <div class="ft-controls">
-      <button type="button" id="ftmute">${room.muted ? "Unmute" : "Mute"}</button>
-      <button type="button" id="ftcam">${room.camera ? "Camera off" : "Camera on"}</button>
-      <button type="button" id="ftflip">Flip</button>
-      <button type="button" id="ftend">End</button>
+      <button type="button" id="ftmute" aria-label="${room.muted ? "Unmute" : "Mute"} microphone">${ic.mic}</button>
+      <button type="button" id="ftcam" aria-label="${room.camera ? "Turn camera off" : "Turn camera on"}">${ic.camera}</button>
+      <button type="button" id="ftflip" aria-label="Flip camera">${ic.flip}</button>
+      <button type="button" id="ftend" aria-label="End camera preview">${ic.close}</button>
     </div>
   </section>`);
   const main = ctx.$("#mainvid");
@@ -70,11 +80,11 @@ function draw(ctx, host) {
     if (host && self) self.srcObject = stream;
     if (host && main) main.srcObject = stream;
   }
-  ctx.$("#ftback").onclick = () => leave(ctx, false);
+  ctx.$("#ftback").onclick = () => leave(ctx, host);
   ctx.$("#ftend").onclick = () => leave(ctx, host);
   ctx.$("#ftmute").onclick = () => { room.muted = !room.muted; stream?.getAudioTracks().forEach(t => t.enabled = !room.muted); draw(ctx, host); };
-  ctx.$("#ftcam").onclick = async () => { room.camera = !room.camera; if (room.camera) await camera(true); else stop(); draw(ctx, host); };
-  ctx.$("#ftflip").onclick = async () => { facing = facing === "user" ? "environment" : "user"; if (room.camera) await camera(true); draw(ctx, host); };
+  ctx.$("#ftcam").onclick = async () => { room.camera = !room.camera; if (room.camera) await camera(true); else stop(); if (room) draw(ctx, host); };
+  ctx.$("#ftflip").onclick = async () => { facing = facing === "user" ? "environment" : "user"; if (room.camera) await camera(true); if (room) draw(ctx, host); };
   ctx.$("#say").onsubmit = (e) => {
     e.preventDefault();
     const body = ctx.$("#line").value.trim();
@@ -87,21 +97,32 @@ function draw(ctx, host) {
 
 async function camera(on) {
   stop();
-  if (!on || !navigator.mediaDevices?.getUserMedia) return;
+  const version = cameraVersion;
+  if (!on || !navigator.mediaDevices?.getUserMedia) { if (room) room.camera = false; return; }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
+    const next = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
+    if (!room || version !== cameraVersion) { next.getTracks().forEach(t => t.stop()); return; }
+    stream = next;
+    stream.getAudioTracks().forEach(t => t.enabled = !room.muted);
   } catch {
-    stream = null;
-    if (room) room.camera = false;
+    if (version === cameraVersion) {
+      stream = null;
+      if (room) room.camera = false;
+    }
   }
 }
 function stop() {
+  cameraVersion++;
   stream?.getTracks().forEach(t => t.stop());
   stream = null;
 }
 function leave(ctx, end) {
-  if (end && room) mutate(db => { const l = db.lives.find(x => x.id === room.id); if (l && l.host === api.me().id) l.live = false; });
-  stop();
-  room = null;
+  leaveLive();
   ctx.render();
 }
+export function leaveLive() {
+  stop();
+  if (room) mutate(db => { const l = db.lives.find(x => x.id === room.id); if (l && l.host === api.me()?.id) l.live = false; });
+  room = null;
+}
+window.addEventListener("pagehide", leaveLive);

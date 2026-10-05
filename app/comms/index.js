@@ -1,6 +1,6 @@
 import { api } from "../store.js";
 import { startCall, accept, decline, hangup, toggleMute, toggleCamera, flipCamera, toggleSpeaker, setMinimized, currentCall, onCallChange, onCallHistory, installSignaling, duration } from "./calls.js";
-import { openVoiceNote, voiceBody, bindVoice } from "./voice-notes.js";
+import { openVoiceNote, closeVoiceNote, voiceBody, bindVoice } from "./voice-notes.js";
 import { pollSupabase } from "./signaling.js";
 
 let ctxRef = { toast() {} };
@@ -22,7 +22,7 @@ export function placeCall(ctx, convoId, video) {
   startCall(convoId, video).catch(err => ctx.toast(err.message || "Call failed"));
 }
 
-export { openVoiceNote, voiceBody, bindVoice };
+export { openVoiceNote, closeVoiceNote, voiceBody, bindVoice };
 
 function draw() {
   let root = document.getElementById("ot-call");
@@ -34,7 +34,7 @@ function draw() {
     document.body.appendChild(root);
   }
   const peer = api.user(call.peer);
-  const name = peer?.name || "Contact";
+  const name = ctxRef.esc(peer?.name || "Contact");
   if (call.minimized) {
     root.className = "ot-call min";
     root.innerHTML = `<button id="ot-restore">${name} · ${call.phase} · ${duration()}</button>`;
@@ -43,10 +43,19 @@ function draw() {
     return;
   }
   root.className = "ot-call";
+  const signature = JSON.stringify([call.id, call.phase, call.video, call.muted, call.speaker, call.cameraOn, name]);
+  if (root.dataset.signature === signature && root.querySelector(".ot-meta")) {
+    const lines = root.querySelector(".ot-meta").children;
+    lines[1].textContent = `${call.video ? "Video" : "Voice"} · ${call.phase} · ${duration()}`;
+    lines[2].textContent = call.detail || "";
+    attachStreams(root, call);
+    return;
+  }
+  root.dataset.signature = signature;
   root.innerHTML = `<div class="ot-card">
     <video id="ot-remote" autoplay playsinline></video>
     <video id="ot-local" autoplay playsinline muted></video>
-    <div class="ot-meta"><b>${name}</b><div>${call.video ? "Video" : "Voice"} · ${call.phase} · ${duration()}</div><div>${call.detail || ""}</div></div>
+    <div class="ot-meta"><b>${name}</b><div>${call.video ? "Video" : "Voice"} · ${ctxRef.esc(call.phase)} · ${duration()}</div><div>${ctxRef.esc(call.detail || "")}</div></div>
     <div class="ot-actions">
       ${call.phase === "incoming" ? `<button id="ot-yes">Accept</button><button id="ot-no">Decline</button>` : ""}
       ${call.phase !== "incoming" ? `<button id="ot-mute">${call.muted ? "Unmute" : "Mute"}</button>` : ""}

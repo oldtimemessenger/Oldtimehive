@@ -1,12 +1,17 @@
-import { api, mutate } from "./store.js";
+import { api, mutate, fileToData } from "./store.js";
 import { placeCall, openVoiceNote, voiceBody, bindVoice } from "./comms/index.js";
+import { icons as ic } from "./icons.js";
+import { openEmojiPicker } from "./emoji.js";
 
 const REACTS = ["❤️", "😂", "😮", "😢", "🙏", "👍", "👎"];
 let ui = { reply: null, screen: "thread", q: "", call: null, filter: "all" };
+let expiryTimer = null;
+export function closeChatTimers() { clearTimeout(expiryTimer); }
 
 export function ensureConvo(ids) {
   const me = api.me();
-  const members = [me.id, ...ids.filter(id => id !== me.id)];
+  const members = [...new Set([me.id, ...ids.filter(id => id !== me.id)])];
+  if (members.some(id => !api.user(id) || api.blocked(me.id, id))) throw new Error("Contact unavailable");
   let c = api.db().convos.find(x => x.members.length === members.length && members.every(id => x.members.includes(id)));
   if (!c) {
     c = blankConvo(members);
@@ -17,7 +22,7 @@ export function ensureConvo(ids) {
 }
 
 function blankConvo(members, title) {
-  return { id: "cv" + Date.now(), members, title: title || "", messages: [], draft: "", pinnedIds: [], disappear: "after view", mutedUntil: 0, wallpaper: "", locked: false, group: members.length > 2 ? groupMeta(title || "Group", members[0]) : null };
+  return { id: "cv" + crypto.randomUUID(), members, title: title || "", messages: [], draft: "", pinnedIds: [], disappear: "off", mutedUntil: 0, wallpaper: "", locked: false, group: members.length > 2 ? groupMeta(title || "Group", members[0]) : null };
 }
 function groupMeta(name, admin) {
   return { name, description: "", admins: [admin], permissions: { send: "everyone", info: "admins", add: "admins", pin: "admins", calls: "everyone", polls: "everyone", all: "admins" }, invite: "join-" + Date.now(), approval: false, requests: [], tags: {}, history: "off" };
@@ -30,7 +35,7 @@ function ready(id) {
     if (!c) return;
     c.draft = c.draft || "";
     c.pinnedIds = c.pinnedIds || [];
-    c.disappear = c.disappear || "after view";
+    c.disappear = c.disappear || "off";
     db.kept = db.kept || [];
     const now = Date.now();
     c.messages = c.messages.filter(m => !(m.expiresAt && m.expiresAt <= now));
@@ -84,14 +89,16 @@ export function logCall(id, label) {
   pushMsg(id, { kind: "call", body: label });
 }
 function pushMsg(id, msg) {
-  msg.id = msg.id || "m" + Date.now();
+  const current = convo(id);
+  if (!current?.members.includes(api.me()?.id) || current.members.some(uid => api.blocked(api.me().id, uid))) throw new Error("Chat unavailable");
+  msg.id = msg.id || "m" + crypto.randomUUID();
   msg.created = Date.now();
   msg.author = msg.author || api.me().id;
   msg.status = "sending";
   msg.reactions = msg.reactions || {};
   msg.editHistory = msg.editHistory || [];
   msg.kept = false;
-  const mode = convo(id)?.disappear || "after view";
+  const mode = convo(id)?.disappear || "off";
   if (mode !== "off" && mode !== "after view") msg.expiresAt = Date.now() + ttl(mode);
   if (msg.kind && msg.kind !== "text") { msg.fileSize = msg.fileSize || ""; msg.body = msg.body || msg.kind; }
   mutate(db => {
@@ -101,20 +108,26 @@ function pushMsg(id, msg) {
   });
   setTimeout(() => mutate(db => {
     const m = db.convos.find(x => x.id === id)?.messages.find(x => x.id === msg.id);
-    if (m && m.status === "sending") m.status = (db.settings?.readReceipts === false) ? "delivered" : "read";
+    if (m && m.status === "sending") {
+      m.status = "sent";
+      const bubble = [...document.querySelectorAll("[data-msg]")].find(el => el.dataset.msg === m.id);
+      const status = bubble?.querySelector(".meta-line > span:last-child");
+      if (status) status.textContent = clock(m.created) + tick(m, api.me());
+    }
   }), 400);
 }
 
 export function openChatList(ctx) {
   ui.screen = "list";
   const me = api.me();
-  const rows = api.db().convos.filter(c => c.members.includes(me.id) && !c.locked && !c.members.some(id => api.db().blocks.some(b => b.by === me.id && b.who === id)));
-  const locked = api.db().convos.filter(c => c.members.includes(me.id) && c.locked);
+  api.db().convos.filter(c => c.members.includes(me.id)).forEach(c => ready(c.id));
+  const rows = api.db().convos.filter(c => c.members.includes(me.id) && !c.locked && !c.members.some(id => api.blocked(me.id, id))).sort((a, b) => (b.messages.at(-1)?.created || 0) - (a.messages.at(-1)?.created || 0));
+  const locked = api.db().convos.filter(c => c.members.includes(me.id) && c.locked && !c.members.some(id => api.blocked(me.id, id)));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
-    <div class="row" style="justify-content:space-between"><button class="icon" id="saved">☆</button><div class="row"><img src="${me.avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>Chats</b></div><div class="row"><button class="icon" id="newgroup">＋</button><button class="icon" id="newchat">✎</button></div></div>
+    <div class="row" style="justify-content:space-between"><button class="icon" id="saved" aria-label="Saved messages">${ic.star}</button><div class="row"><img src="${me.avatar}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" /><b>Chats</b></div><div class="row"><button class="icon" id="newgroup" aria-label="New group">${ic.plus}</button><button class="icon" id="newchat" aria-label="New message">${ic.edit}</button></div></div>
     <input class="chatsearch" id="cq" placeholder="Search" />
-    ${locked.map(c => `<button class="listbtn" data-unlock="${c.id}">Locked · ${ctxEsc(nameOf(c, me))}</button>`).join("")}
-    <div id="crows">${rows.map(c => row(c, me)).join("")}</div>
+    ${locked.map(c => `<button class="listbtn" data-unlock="${c.id}">Show hidden chat · ${ctxEsc(nameOf(c, me))}</button>`).join("")}
+    <div id="crows">${rows.map(c => row(c, me)).join("") || `<div class="empty">No chats yet. Start a new message.</div>`}</div>
   </div></section>`, "light");
   ctx.$("#newchat").onclick = () => pick(ctx, false);
   ctx.$("#newgroup").onclick = () => pick(ctx, true);
@@ -122,14 +135,15 @@ export function openChatList(ctx) {
   ctx.app.querySelectorAll("[data-unlock]").forEach(b => b.onclick = () => { mutate(db => { db.convos.find(x => x.id === b.dataset.unlock).locked = false; }); ui.screen = "thread"; ctx.setChat(b.dataset.unlock); });
   ctx.$("#cq").oninput = (e) => {
     const q = e.target.value.toLowerCase();
-    ctx.$("#crows").innerHTML = rows.filter(c => nameOf(c, me).toLowerCase().includes(q) || (c.draft || "").toLowerCase().includes(q) || preview(c.messages.at(-1)).toLowerCase().includes(q)).map(c => row(c, me)).join("");
+    ctx.$("#crows").innerHTML = rows.filter(c => nameOf(c, me).toLowerCase().includes(q) || (c.draft || "").toLowerCase().includes(q) || preview(c.messages.at(-1)).toLowerCase().includes(q)).map(c => row(c, me)).join("") || `<div class="empty">No matching chats.</div>`;
     bindRows(ctx);
   };
   bindRows(ctx);
 }
 function row(c, me) {
-  const last = c.messages[c.messages.length - 1];
-  const unread = c.messages.filter(m => m.author !== me.id && m.status !== "read" && !m.read).length;
+  const visible = c.messages.filter(m => !m.hiddenFor?.includes(me.id));
+  const last = visible.at(-1);
+  const unread = visible.filter(m => m.author !== me.id && m.status !== "read" && !m.read).length;
   const text = c.draft ? "Draft: " + c.draft : preview(last);
   const others = c.members.filter(id => id !== me.id).map(api.user).filter(Boolean);
   return `<button class="listbtn" data-cv="${c.id}"><img src="${others[0]?.avatar || me.avatar}" style="width:52px;height:52px;border-radius:50%;object-fit:cover" /><div style="flex:1"><b>${ctxEsc(nameOf(c, me))}</b><div class="sub">${ctxEsc(text).slice(0, 48)}</div></div><div style="text-align:right"><div class="sub">${last ? clock(last.created) : ""}</div>${unread ? `<span class="unread">${unread}</span>` : ""}${c.mutedUntil > Date.now() ? `<div class="sub">Muted</div>` : ""}</div></button>`;
@@ -137,9 +151,11 @@ function row(c, me) {
 function bindRows(ctx) {
   ctx.app.querySelectorAll("[data-cv]").forEach(b => b.onclick = () => { ui.screen = "thread"; ctx.setChat(b.dataset.cv); });
 }
-function ctxEsc(s) { return String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;"); }
+function ctxEsc(s = "") { return String(s).replace(/&/g, "&" + "amp;").replace(/</g, "&" + "lt;").replace(/>/g, "&" + "gt;").replace(/"/g, "&" + "quot;"); }
 
 export function openThread(id, ctx) {
+  const allowed = convo(id);
+  if (!allowed?.members.includes(api.me()?.id) || allowed.members.some(uid => api.blocked(api.me().id, uid))) { ui.screen = "list"; ctx.setChat(null); ctx.toast("Chat unavailable"); return; }
   ready(id);
   if (ui.screen === "info") return info(ctx, id);
   if (ui.screen === "search") return search(ctx, id);
@@ -150,52 +166,58 @@ export function openThread(id, ctx) {
   const other = api.user(c.members.find(x => x !== me.id)) || me;
   mutate(db => db.convos.find(x => x.id === id).messages.forEach(m => { if (m.author !== me.id && !m.kept) { m.read = true; if (db.settings.readReceipts !== false) m.status = "read"; if ((db.convos.find(x => x.id === id).disappear === "after view") && !m.expiresAt) m.expiresAt = Date.now() + 8000; } }));
   const pin = c.messages.find(m => (c.pinnedIds || []).includes(m.id));
-  const presence = c.group ? c.members.length + " participants" : (other.online ? "online" : "last seen " + ctx.ago(other.lastSeen || Date.now() - 36e5));
+  const presence = c.group ? c.members.length + " participants" : "Local demo account";
   ctx.shell(`<section class="screen on" style="background:${c.wallpaper || "#fff"};color:#111">
     <div class="topbar">
       <button id="back">←</button>
       <img src="${other.avatar}" style="width:34px;height:34px;border-radius:50%;object-fit:cover" />
-      <button id="info" style="text-align:left;flex:1"><b>${ctxEsc(c.group ? nameOf(c, me) : other.name)}</b> ${other.verified && !c.group ? "✓" : ""}<div class="sub">${c.group ? presence : "@" + ctxEsc(other.username) + " · " + presence}</div></button>
-      <button id="vcall" aria-label="Voice">☎</button>
-      <button id="vid" aria-label="Video">▣</button>
-      <button id="find">⌕</button>
-      <button id="more">•••</button>
+      <button id="info" style="text-align:left;flex:1"><b>${ctxEsc(c.group ? nameOf(c, me) : other.name)}</b> ${other.verified && !c.group ? `<span class="verified" aria-label="Verified">${ic.check}</span>` : ""}<div class="sub">${c.group ? presence : "@" + ctxEsc(other.username) + " · " + presence}</div></button>
+      <button id="vcall" class="icon" aria-label="Voice call">${ic.phone}</button>
+      <button id="vid" class="icon" aria-label="Video call">${ic.video}</button>
+      <button id="find" class="icon" aria-label="Search chat">${ic.search}</button>
+      <button id="more" class="icon" aria-label="More chat options">${ic.more}</button>
     </div>
     ${pin ? `<button class="pinbar" id="pinjump">Pinned · ${ctxEsc(preview(pin))}</button>` : ""}
-    <div class="scroll" id="msgs" style="padding:8px 12px 150px">${messages(c, me)}</div>
-    ${ui.reply ? `<div class="replybar">Reply · ${ctxEsc(preview(c.messages.find(m => m.id === ui.reply) || {}))}<button id="clearrep">✕</button></div>` : ""}
-    <form id="send" class="composer"><button type="button" id="emoji">☺</button><button type="button" id="attach">＋</button><input id="msg" placeholder="Message" value="${ctxEsc(c.draft || "")}" /><button type="button" id="mic">●</button><button type="submit">Send</button></form>
+    <div class="scroll" id="msgs" data-convo="${id}" style="padding:8px 12px 150px">${messages(c, me)}</div>
+    ${ui.reply ? `<div class="replybar">Reply · ${ctxEsc(preview(c.messages.find(m => m.id === ui.reply) || {}))}<button id="clearrep" aria-label="Cancel reply">${ic.close}</button></div>` : ""}
+    <form id="send" class="composer"><button type="button" id="emoji" aria-label="Add emoji">${ic.smile}</button><button type="button" id="attach" aria-label="Attach">${ic.plus}</button><input id="msg" aria-label="Message" placeholder="Message" value="${ctxEsc(c.draft || "")}" /><button type="button" id="mic" aria-label="Record voice note">${ic.mic}</button><button type="submit" aria-label="Send message">${ic.send}</button></form>
   </section>`, "light");
   ctx.$("#back").onclick = () => { ui.screen = "list"; ui.reply = null; ctx.setChat(null); };
   ctx.$("#info").onclick = () => { ui.screen = "info"; ctx.render(); };
   ctx.$("#find").onclick = () => { ui.screen = "search"; ctx.render(); };
-  ctx.$("#more").onclick = () => menu(ctx, ["Chat info", "Search", "Mute", "Disappearing messages", "Wallpaper", "Lock chat"], (label) => {
+  ctx.$("#more").onclick = () => menu(ctx, ["Chat info", "Search", "Mute", "Disappearing messages", "Wallpaper", "Hide chat"], (label) => {
     if (label === "Chat info") ui.screen = "info";
     if (label === "Search") ui.screen = "search";
     if (label === "Mute") return mute(ctx, id);
     if (label === "Disappearing messages") return disappear(ctx, id);
     if (label === "Wallpaper") mutate(db => { const cv = db.convos.find(x => x.id === id); cv.wallpaper = cv.wallpaper ? "" : "#e7f6e9"; });
-    if (label === "Lock chat") { mutate(db => { db.convos.find(x => x.id === id).locked = true; }); ui.screen = "list"; ctx.setChat(null); return; }
+    if (label === "Hide chat") { mutate(db => { db.convos.find(x => x.id === id).locked = true; }); ui.screen = "list"; ctx.setChat(null); return; }
     ctx.render();
   });
   ctx.$("#vcall").onclick = () => placeCall(ctx, id, false);
   ctx.$("#vid").onclick = () => placeCall(ctx, id, true);
   if (ctx.$("#pinjump")) ctx.$("#pinjump").onclick = () => jump(c.pinnedIds[0]);
   if (ctx.$("#clearrep")) ctx.$("#clearrep").onclick = () => { ui.reply = null; ctx.render(); };
-  ctx.$("#emoji").onclick = () => menu(ctx, ["😀", "😂", "❤️", "🔥", "👍", "🙏"], (e) => { ctx.$("#msg").value += e; });
+  ctx.$("#emoji").onclick = () => openEmojiPicker(ctx.$("#msg"));
   ctx.$("#attach").onclick = () => attach(ctx, id);
   ctx.$("#mic").onclick = () => openVoiceNote(ctx, id, pushMsg);
   ctx.$("#msg").oninput = (e) => mutate(db => { db.convos.find(x => x.id === id).draft = e.target.value; });
   ctx.$("#send").onsubmit = (e) => { e.preventDefault(); const body = ctx.$("#msg").value.trim(); if (!body) return; pushMsg(id, { kind: "text", body, replyTo: ui.reply }); ui.reply = null; ctx.render(); };
-  ctx.app.querySelectorAll("[data-msg]").forEach(b => b.onclick = () => onMessage(ctx, id, b.dataset.msg));
+  ctx.app.querySelectorAll("[data-msg]").forEach(b => {
+    b.onclick = () => onMessage(ctx, id, b.dataset.msg);
+    b.onkeydown = e => { if (e.target === b && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onMessage(ctx, id, b.dataset.msg); } };
+  });
+  ctx.app.querySelectorAll(".message-media, .message-file").forEach(el => el.onclick = e => e.stopPropagation());
   bindVoice(ctx.app);
   ctx.app.querySelectorAll("[data-vote]").forEach(b => b.onclick = (e) => { e.stopPropagation(); const [mid, i] = b.dataset.vote.split(":"); vote(id, mid, +i); ctx.render(); });
   ctx.app.querySelectorAll("[data-retry]").forEach(b => b.onclick = (e) => { e.stopPropagation(); mutate(db => { db.convos.find(x => x.id === id).messages.find(x => x.id === b.dataset.retry).status = "sent"; }); ctx.render(); });
   const box = ctx.$("#msgs"); if (box) box.scrollTop = box.scrollHeight;
+  const nextExpiry = Math.min(...c.messages.filter(m => m.expiresAt).map(m => m.expiresAt));
+  if (Number.isFinite(nextExpiry)) expiryTimer = setTimeout(() => { if (ctx.$("#msgs")?.dataset.convo === id) ctx.render(); }, Math.max(1, nextExpiry - Date.now() + 20));
 }
 function messages(c, me) {
   let last = "", unread = false;
-  return c.messages.map(m => {
+  return c.messages.filter(m => !m.hiddenFor?.includes(me.id)).map(m => {
     const bits = [];
     const d = day(m.created);
     if (d !== last) { last = d; bits.push(`<div class="datesep">${d}</div>`); }
@@ -208,24 +230,24 @@ function bubble(m, c, me) {
   if (m.kind === "system") return `<div class="datesep">${ctxEsc(m.body || "")}</div>`;
   const mine = m.author === me.id;
   const reply = m.replyTo ? c.messages.find(x => x.id === m.replyTo) : null;
-  const reacts = Object.entries(m.reactions || {}).filter(([, ids]) => ids.length).map(([e, ids]) => e + " " + ids.length).join("  ");
+  const reacts = Object.entries(m.reactions || {}).filter(([, ids]) => ids.length).map(([e, ids]) => ctxEsc(e) + " " + ids.length).join("  ");
   const flags = [m.edited ? "edited" : "", m.forwarded ? "Forwarded" : "", m.starred ? "★" : "", (c.pinnedIds || []).includes(m.id) ? "Pinned" : ""].filter(Boolean).join(" · ");
-  return `<button class="bubble-msg ${mine ? "mine" : "theirs"}" data-msg="${m.id}">
+  return `<div class="bubble-msg ${mine ? "mine" : "theirs"}" data-msg="${m.id}" role="button" tabindex="0" aria-label="Message options">
     ${c.group && !mine ? `<div class="sub">${ctxEsc(api.user(m.author)?.name || "")}</div>` : ""}
     ${reply ? `<div class="quote">${ctxEsc(preview(reply))}</div>` : ""}
     ${body(m)}
     <div class="meta-line"><span>${flags}</span><span>${clock(m.created)}${tick(m, me)}</span></div>
     ${reacts ? `<div class="reacts">${reacts}</div>` : ""}
     ${m.status === "failed" ? `<div class="sub" data-retry="${m.id}">Not sent · Retry</div>` : ""}
-  </button>`;
+  </div>`;
 }
 function body(m) {
   if (m.expired) return "This photo has expired.";
-  if (m.kind === "photo") return `Photo${m.viewOnce ? " · View once" : ""}${m.caption ? "<div>" + ctxEsc(m.caption) + "</div>" : ""}`;
-  if (m.kind === "video") return "Video";
+  if (m.kind === "photo" || m.kind === "gif") return m.viewOnce ? "Photo · View once" : m.media ? `<img class="message-media" src="${ctxEsc(m.media)}" alt="${ctxEsc(m.caption || "Shared photo")}" />${m.caption ? `<div>${ctxEsc(m.caption)}</div>` : ""}` : "Photo unavailable";
+  if (m.kind === "video") return m.media ? `<video class="message-media" src="${ctxEsc(m.media)}" controls playsinline preload="metadata"></video>` : "Video unavailable";
   if (m.kind === "voice") return voiceBody(m);
-  if (m.kind === "file") return ctxEsc(m.fileName || "File") + " · " + ctxEsc(m.fileSize || "120 KB");
-  if (m.kind === "gif" || m.kind === "sticker") return `<div style="font-size:36px">${ctxEsc(m.body || "")}</div>`;
+  if (m.kind === "file") return m.media ? `<a class="message-file" href="${ctxEsc(m.media)}" download="${ctxEsc(m.fileName || "download")}">${ctxEsc(m.fileName || "File")}</a> · ${ctxEsc(m.fileSize || "")}` : "File unavailable";
+  if (m.kind === "sticker") return `<div class="emoji" style="font-size:48px">${ctxEsc(m.body || "")}</div>`;
   if (m.kind === "location") return "Location · " + ctxEsc(m.body || "Shared place");
   if (m.kind === "contact") return "Contact · " + ctxEsc(m.body || "");
   if (m.kind === "call") return ctxEsc(m.body || "Call");
@@ -235,15 +257,21 @@ function body(m) {
 }
 function poll(m) {
   const p = m.poll || { question: m.body, options: [], votes: {} };
-  return `<b>${ctxEsc(p.question)}</b>` + (p.options || []).map((o, i) => `<div class="pollopt" data-vote="${m.id}:${i}">${ctxEsc(o)} · ${(p.votes?.[i] || []).length}</div>`).join("");
+  return `<b>${ctxEsc(p.question)}</b>` + (p.options || []).map((o, i) => `<button class="pollopt" data-vote="${m.id}:${i}">${ctxEsc(o)} · ${(p.votes?.[i] || []).length}</button>`).join("");
 }
 function onMessage(ctx, cid, id) {
   const c = convo(cid);
   const m = c.messages.find(x => x.id === id);
   if (!m) return;
-  if (m.viewOnce && !m.viewed && m.author !== api.me().id) {
-    mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.viewed = true; msg.expired = true; });
-    ctx.toast("Opened once"); ctx.render(); return;
+  if (m.viewOnce && !m.viewed && m.author !== api.me().id && m.media) {
+    const media = m.media;
+    mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.viewed = true; msg.expired = true; delete msg.media; });
+    const sheet = ctx.$("#sheet");
+    sheet.classList.add("on");
+    sheet.innerHTML = `<div class="panel"><b>View once</b><img class="message-media" src="${ctxEsc(media)}" alt="View once photo" /><button class="btn" id="close-once">Close</button></div>`;
+    ctx.$("#close-once").onclick = () => ctx.render();
+    sheet.onclick = e => { if (e.target === sheet) ctx.render(); };
+    return;
   }
   const mine = m.author === api.me().id;
   const actions = ["Reply", "React", "Forward", "Copy", "Keep", "Star", "Pin", "Delete"];
@@ -251,14 +279,18 @@ function onMessage(ctx, cid, id) {
   if (mine) actions.push("Delete for everyone");
   menu(ctx, actions, (label) => {
     if (label === "Reply") ui.reply = id;
-    if (label === "React") return menu(ctx, REACTS, (e) => { react(cid, id, e); ctx.render(); });
+    if (label === "React") {
+      const target = document.createElement("input");
+      return openEmojiPicker(target, emoji => { react(cid, id, emoji); ctx.render(); });
+    }
     if (label === "Forward") return forward(ctx, cid, id);
-    if (label === "Copy") { navigator.clipboard?.writeText(m.body || preview(m)); ctx.toast("Copied"); }
+    if (label === "Copy") { navigator.clipboard?.writeText(m.body || preview(m)).then(() => ctx.toast("Copied")).catch(() => ctx.toast("Couldn't copy")); if (!navigator.clipboard) ctx.toast("Clipboard unavailable"); }
     if (label === "Keep") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.kept = true; delete msg.expiresAt; db.kept = db.kept || []; db.kept.push({ id, chat: cid, body: (msg.body || "").slice(0, 280), kind: msg.kind, at: Date.now() }); });
     if (label === "Star") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.starred = !msg.starred; db.saved = db.saved || []; if (msg.starred) db.saved.push(id); });
     if (label === "Pin") mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.pinnedIds = cv.pinnedIds.includes(id) ? cv.pinnedIds.filter(x => x !== id) : [id, ...cv.pinnedIds].slice(0, 3); });
     if (label === "Edit") { const next = prompt("Edit message", m.body); if (next) mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.editHistory.push(msg.body); msg.body = next; msg.edited = true; }); }
-    if (label === "Delete" || label === "Delete for everyone") mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.messages = cv.messages.filter(x => x.id !== id); });
+    if (label === "Delete") mutate(db => { const msg = db.convos.find(x => x.id === cid).messages.find(x => x.id === id); msg.hiddenFor = [...new Set([...(msg.hiddenFor || []), api.me().id])]; });
+    if (label === "Delete for everyone" && mine) mutate(db => { const cv = db.convos.find(x => x.id === cid); cv.messages = cv.messages.filter(x => x.id !== id); });
     ctx.render();
   });
 }
@@ -280,27 +312,74 @@ function vote(cid, id, i) {
   });
 }
 function forward(ctx, cid, id) {
-  const targets = api.db().convos.filter(c => c.members.includes(api.me().id) && c.id !== cid);
-  menu(ctx, targets.map(c => nameOf(c, api.me())), (name) => {
-    const to = targets.find(c => nameOf(c, api.me()) === name);
+  const src = convo(cid).messages.find(m => m.id === id);
+  if (src.viewOnce || src.expired) return ctx.toast("View-once media cannot be forwarded");
+  const targets = api.db().convos.filter(c => c.members.includes(api.me().id) && c.id !== cid && !c.members.some(uid => api.blocked(api.me().id, uid)));
+  if (!targets.length) return ctx.toast("Start another chat to forward a message");
+  menu(ctx, targets.map((c, i) => `${i + 1}. ${nameOf(c, api.me())}`), (name) => {
+    const to = targets[Number(name.split(".")[0]) - 1];
     const src = convo(cid).messages.find(m => m.id === id);
-    pushMsg(to.id, { ...src, id: "m" + Date.now(), forwarded: true, author: api.me().id });
+    const copy = structuredClone(src);
+    ["id", "replyTo", "expiresAt", "starred", "viewed", "expired", "hiddenFor"].forEach(key => delete copy[key]);
+    pushMsg(to.id, { ...copy, forwarded: true, author: api.me().id, reactions: {}, editHistory: [], status: "sending" });
     ctx.toast("Forwarded");
   });
 }
 function attach(ctx, id) {
   menu(ctx, ["Camera", "Photo", "Video", "Document", "GIF", "Sticker", "Location", "Contact", "Poll", "View once"], (label) => {
     const me = api.me();
-    if (label === "Photo" || label === "Camera") pushMsg(id, { kind: "photo", body: "Photo" });
-    if (label === "Video") pushMsg(id, { kind: "video", body: "Video" });
-    if (label === "Document") pushMsg(id, { kind: "file", fileName: "notes.pdf", fileSize: "240 KB", body: "notes.pdf" });
-    if (label === "GIF") pushMsg(id, { kind: "gif", body: "😂" });
-    if (label === "Sticker") pushMsg(id, { kind: "sticker", body: "😎" });
-    if (label === "Location") pushMsg(id, { kind: "location", body: me.city || "Current location" });
-    if (label === "Contact") pushMsg(id, { kind: "contact", body: me.name + " @" + me.username });
-    if (label === "Poll") pushMsg(id, { kind: "poll", body: "Where should we eat?", poll: { question: "Where should we eat?", options: ["Pizza", "Burgers", "Tacos", "Sushi"], votes: {} } });
-    if (label === "View once") pushMsg(id, { kind: "photo", body: "Photo", viewOnce: true });
-    ctx.render();
+    if (["Photo", "Camera", "Video", "Document", "GIF", "View once"].includes(label)) {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.hidden = true;
+      input.accept = label === "Video" ? "video/*" : label === "Document" ? ".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.zip" : label === "GIF" ? "image/gif" : "image/*";
+      if (label === "Camera") input.setAttribute("capture", "environment");
+      ctx.app.appendChild(input);
+      input.oncancel = () => input.remove();
+      input.onchange = async () => {
+        try {
+          const file = input.files[0];
+          if (!file) return;
+          if (label !== "Document" && !file.type.startsWith(label === "Video" ? "video/" : "image/")) return ctx.toast("Choose the matching media type");
+          if (label === "GIF" && file.type !== "image/gif") return ctx.toast("Choose a GIF file");
+          const media = await fileToData(file);
+          const kind = label === "Document" ? "file" : label === "GIF" ? "gif" : media.video ? "video" : "photo";
+          pushMsg(id, { kind, media: media.url, body: file.name, fileName: file.name, fileSize: `${Math.ceil(file.size / 1024)} KB`, viewOnce: label === "View once" });
+          ctx.render();
+        } catch (e) { ctx.toast(e.message || "Couldn't attach file"); }
+        finally { input.remove(); }
+      };
+      input.click();
+      return;
+    }
+    if (label === "Sticker") {
+      const target = document.createElement("input");
+      return openEmojiPicker(target, emoji => { pushMsg(id, { kind: "sticker", body: emoji }); ctx.render(); });
+    }
+    if (label === "Location") {
+      const place = prompt("Share a place (not your live location)", me.city || "");
+      if (place?.trim()) pushMsg(id, { kind: "location", body: place.trim() });
+      return ctx.render();
+    }
+    if (label === "Contact") {
+      const users = api.db().users.filter(u => !api.blocked(me.id, u.id));
+      return menu(ctx, users.map(u => `${u.name} (@${u.username})`), name => {
+        const user = users.find(u => `${u.name} (@${u.username})` === name);
+        pushMsg(id, { kind: "contact", body: `${user.name} @${user.username}` }); ctx.render();
+      });
+    }
+    if (label === "Poll") {
+      const sheet = ctx.$("#sheet");
+      sheet.classList.add("on");
+      sheet.innerHTML = `<div class="panel"><b>Create poll</b><input class="field" id="poll-question" placeholder="Question" /><textarea class="field" id="poll-options" placeholder="Options, one per line"></textarea><button class="btn" id="poll-send">Send poll</button></div>`;
+      ctx.$("#poll-send").onclick = () => {
+        const question = ctx.$("#poll-question").value.trim();
+        const options = [...new Set(ctx.$("#poll-options").value.split("\n").map(o => o.trim()).filter(Boolean))];
+        if (!question || options.length < 2 || options.length > 10) return ctx.toast("Add a question and 2–10 different options");
+        pushMsg(id, { kind: "poll", body: question, poll: { question, options, votes: {} } }); ctx.render();
+      };
+      sheet.onclick = e => { if (e.target === sheet) sheet.classList.remove("on"); };
+    }
   });
 }
 function info(ctx, id) {
@@ -330,25 +409,26 @@ function info(ctx, id) {
 function search(ctx, id) {
   const c = convo(id);
   const q = (ui.q || "").toLowerCase();
-  const hits = c.messages.filter(m => !q || preview(m).toLowerCase().includes(q) || (m.body || "").toLowerCase().includes(q));
+  const hits = c.messages.filter(m => !m.hiddenFor?.includes(api.me().id) && (!q || preview(m).toLowerCase().includes(q) || (m.body || "").toLowerCase().includes(q)));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Search</b><span></span></div>
     <input class="chatsearch" id="sq" placeholder="Search this chat" value="${ctxEsc(ui.q)}" />
     ${hits.map(m => `<button class="listbtn" data-jump="${m.id}">${ctxEsc(preview(m))}</button>`).join("")}
   </div></section>`, "light");
   ctx.$("#back").onclick = () => { ui.screen = "thread"; ctx.render(); };
-  ctx.$("#sq").oninput = (e) => { ui.q = e.target.value; ctx.render(); };
+  ctx.$("#sq").oninput = (e) => { const position = e.target.selectionStart; ui.q = e.target.value; ctx.render(); ctx.$("#sq").focus(); ctx.$("#sq").setSelectionRange(position, position); };
   ctx.app.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => { ui.screen = "thread"; ctx.render(); setTimeout(() => jump(b.dataset.jump), 30); });
 }
 function media(ctx, id) {
   const c = convo(id);
-  const items = c.messages.filter(m => ["photo", "video", "file", "voice", "gif"].includes(m.kind));
+  const items = c.messages.filter(m => !m.hiddenFor?.includes(api.me().id) && !m.viewOnce && !m.expired && ["photo", "video", "file", "voice", "gif"].includes(m.kind));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Media</b><span></span></div>
     <div class="sub">Photos ${items.filter(m => m.kind === "photo").length} · Videos ${items.filter(m => m.kind === "video").length} · Files ${items.filter(m => m.kind === "file").length} · Voice ${items.filter(m => m.kind === "voice").length}</div>
-    ${items.map(m => `<div class="listbtn">${ctxEsc(preview(m))}</div>`).join("") || `<div class="empty">No media yet.</div>`}
+    ${items.map(m => `<div class="card">${body(m)}</div>`).join("") || `<div class="empty">No media yet.</div>`}
   </div></section>`, "light");
   ctx.$("#back").onclick = () => { ui.screen = "thread"; ctx.render(); };
+  bindVoice(ctx.app);
 }
 function group(ctx, id) {
   const c = convo(id);
@@ -359,15 +439,15 @@ function group(ctx, id) {
     ${c.members.map(uid => `<div class="listbtn">${ctxEsc(api.user(uid)?.name || uid)} ${g.admins.includes(uid) ? "· Admin" : ""}</div>`).join("")}
     <button class="btn" id="gsave" style="margin-top:8px">Save</button>
     <button class="listbtn" id="from">New group from these people</button>
-    <div class="sub">Invite · ${ctxEsc(g.invite)} · Approval ${g.approval ? "on" : "off"}</div>
+    <div class="sub">Local demo group · external invitations are not connected.</div>
   </div></section>`, "light");
   ctx.$("#back").onclick = () => { ui.screen = "info"; ctx.render(); };
-  ctx.$("#gsave").onclick = () => { mutate(db => { db.convos.find(x => x.id === id).group.name = ctx.$("#gname").value; }); ctx.toast("Saved"); };
+  ctx.$("#gsave").onclick = () => { if (!g.admins.includes(api.me().id)) return ctx.toast("Only group admins can change the name"); const name = ctx.$("#gname").value.trim(); if (!name) return ctx.toast("Enter a group name"); mutate(db => { db.convos.find(x => x.id === id).group.name = name; }); ctx.toast("Saved"); };
   ctx.$("#from").onclick = () => { const title = prompt("Group name", "New group"); if (!title) return; const c2 = blankConvo(c.members.slice(0, 8), title); c2.group = groupMeta(title, api.me().id); mutate(db => db.convos.unshift(c2)); ui.screen = "thread"; ctx.setChat(c2.id); };
 }
 function saved(ctx) {
   const items = [];
-  api.db().convos.forEach(c => c.messages.forEach(m => { if (m.starred || m.kept) items.push([c, m]); }));
+  api.db().convos.filter(c => c.members.includes(api.me().id) && !c.locked && !c.members.some(uid => api.blocked(api.me().id, uid))).forEach(c => c.messages.forEach(m => { if (!m.hiddenFor?.includes(api.me().id) && (m.starred || m.kept) && !(m.expiresAt <= Date.now())) items.push([c, m]); }));
   ctx.shell(`<section class="screen on light" style="background:#fff;color:#111"><div class="scroll page">
     <div class="topbar"><button id="back">←</button><b>Saved</b><span></span></div>
     ${items.map(([c, m]) => `<button class="listbtn" data-cv="${c.id}">${ctxEsc(nameOf(c, api.me()))} · ${ctxEsc(preview(m))}</button>`).join("") || `<div class="empty">No saved messages.</div>`}
@@ -416,14 +496,18 @@ function pick(ctx, group) {
   const draw = () => {
     sheet.innerHTML = `<div class="panel"><div class="grab"></div><b>${group ? "New group" : "New message"}</b>
       ${group ? `<input class="field" id="gtitle" placeholder="Group name" style="margin:8px 0" value="${ctxEsc(title)}" />` : ""}
-      ${api.db().users.filter(u => u.id !== api.me().id).map(u => `<button class="listbtn" data-pick="${u.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b>${picked.has(u.id) ? " · added" : ""}</div></button>`).join("")}
+      ${api.db().users.filter(u => u.id !== api.me().id && !api.blocked(api.me().id, u.id)).map(u => `<button class="listbtn" data-pick="${u.id}"><img src="${u.avatar}" style="width:36px;height:36px;border-radius:50%;object-fit:cover" /><div><b>@${u.username}</b>${picked.has(u.id) ? " · added" : ""}</div></button>`).join("")}
       <button class="btn" id="start">Start</button></div>`;
     if (group) ctx.$("#gtitle").oninput = (e) => { title = e.target.value; };
     sheet.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => { if (group) picked.has(b.dataset.pick) ? picked.delete(b.dataset.pick) : picked.add(b.dataset.pick); else { picked.clear(); picked.add(b.dataset.pick); } draw(); });
     ctx.$("#start").onclick = () => {
       if (!picked.size) return ctx.toast("Pick someone");
-      const id = ensureConvo([...picked]);
-      if (group) mutate(db => { const c = db.convos.find(x => x.id === id); c.title = ctx.$("#gtitle")?.value.trim() || "Group"; c.group = groupMeta(c.title, api.me().id); });
+      let id;
+      if (group) {
+        const c = blankConvo([api.me().id, ...picked], title.trim() || "Group");
+        c.group = groupMeta(c.title, api.me().id);
+        mutate(db => db.convos.unshift(c)); id = c.id;
+      } else id = ensureConvo([...picked]);
       sheet.classList.remove("on"); ui.screen = "thread"; ctx.setChat(id);
     };
   };
