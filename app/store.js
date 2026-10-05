@@ -45,7 +45,8 @@ export function seed() {
     blocks: [],
     reports: [],
     interests: {},
-    resets: []
+    resets: [],
+    settings: { readReceipts: true, lastSeen: "everyone" }
   };
 }
 
@@ -56,6 +57,9 @@ function load() {
     if (!raw || !raw.users) return seed();
     raw.requests = raw.requests || [];
     raw.resets = raw.resets || [];
+    raw.settings = raw.settings || { readReceipts: true, lastSeen: "everyone" };
+    if (raw.settings.readReceipts === undefined) raw.settings.readReceipts = true;
+    if (!raw.settings.lastSeen) raw.settings.lastSeen = "everyone";
     return raw;
   } catch { return seed(); }
 }
