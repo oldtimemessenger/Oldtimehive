@@ -62,7 +62,8 @@ function toast(msg) {
 }
 function shell(inner, mode) {
   closeEmojiPicker();
-  closeVoiceNote();
+  const conversation = $("#msgs")?.dataset.convo;
+  closeVoiceNote(!conversation || !inner.includes(`data-convo="${conversation}"`));
   closeChatTimers();
   clearInterval(storyTimer);
   feedObserver?.disconnect();
@@ -87,7 +88,11 @@ function shell(inner, mode) {
     else { chatId = null; profileId = null; viewer = null; }
     render();
   });
-  $("#create-open").onclick = () => { leaveLive(); openCreate(); };
+  $("#create-open").onclick = () => {
+    leaveLive();
+    if ($("#ftback") || $("#live-back")) render();
+    openCreate();
+  };
   app.querySelectorAll('#back, #ftback, #playall').forEach(button => {
     const symbols = { "←": ["back", "Back"], "✕": ["close", "Close"], "▶": ["play", "Play"] };
     const replacement = symbols[button.textContent.trim()];

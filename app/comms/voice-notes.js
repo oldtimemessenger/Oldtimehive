@@ -6,11 +6,11 @@ import { api } from "../store.js";
 const cache = new Map();
 let cancelRecording = null;
 
-export function closeVoiceNote() {
+export function closeVoiceNote(pausePlayback = true) {
   cancelRecording?.();
-  players.forEach(p => p.audio.pause());
+  if (pausePlayback) players.forEach(p => p.audio.pause());
 }
-window.addEventListener("pagehide", closeVoiceNote);
+window.addEventListener("pagehide", () => closeVoiceNote());
 
 export function formatDur(sec) {
   const s = Math.max(0, Math.round(sec || 0));
@@ -151,9 +151,20 @@ const players = new Map();
 
 export function bindVoice(root) {
   root.querySelectorAll("[data-vplay]").forEach(btn => {
+    const player = players.get(btn.dataset.vplay);
+    if (player) {
+      btn.textContent = player.audio.paused ? "Play" : "Pause";
+      player.audio.onended = () => { btn.textContent = "Play"; };
+      player.audio.ontimeupdate = () => {
+        const wave = btn.parentElement.querySelector("[data-vwave]");
+        if (wave && player.audio.duration) wave.style.setProperty("--p", (player.audio.currentTime / player.audio.duration * 100) + "%");
+      };
+    }
     btn.onclick = (e) => { e.stopPropagation(); toggle(btn.dataset.vplay, btn); };
   });
   root.querySelectorAll("[data-vspeed]").forEach(btn => {
+    const player = players.get(btn.dataset.vspeed);
+    if (player) btn.textContent = player.audio.playbackRate + "×";
     btn.onclick = (e) => {
       e.stopPropagation();
       const p = players.get(btn.dataset.vspeed);

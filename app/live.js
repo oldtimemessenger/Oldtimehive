@@ -18,8 +18,13 @@ export function openLive(ctx) {
     <div class="empty">Preview your camera and microphone locally. Public broadcasting and remote viewers require a streaming backend and are not connected.</div>
     <button id="golive" class="btn">Start camera preview</button>
   </div></section>`);
-  ctx.$("#live-back").onclick = () => ctx.render();
-  ctx.$("#golive").onclick = () => start(ctx);
+  ctx.$("#live-back").onclick = () => { leaveLive(); ctx.render(); };
+  ctx.$("#golive").onclick = async () => {
+    const button = ctx.$("#golive");
+    button.disabled = true;
+    try { await start(ctx); }
+    finally { if (button.isConnected) button.disabled = false; }
+  };
 }
 
 function ensure() {
@@ -34,7 +39,7 @@ async function start(ctx) {
   mutate(db => db.lives.unshift({ id, host: me.id, title: "Camera preview", live: true, viewers: 0, camera: true, muted: false, comments: [] }));
   room = api.db().lives.find(l => l.id === id);
   await camera(true);
-  if (!room) { stop(); return; }
+  if (room?.id !== id) return;
   draw(ctx, true);
   if (!stream) ctx.toast("Camera unavailable. Check permissions and use HTTPS or localhost.");
 }
@@ -100,8 +105,10 @@ async function camera(on) {
     stream = next;
     stream.getAudioTracks().forEach(t => t.enabled = !room.muted);
   } catch {
-    stream = null;
-    if (room) room.camera = false;
+    if (version === cameraVersion) {
+      stream = null;
+      if (room) room.camera = false;
+    }
   }
 }
 function stop() {
